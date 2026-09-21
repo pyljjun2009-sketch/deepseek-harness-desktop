@@ -1,0 +1,24 @@
+# Conservative, reversible token savings using official DSH components only.
+# DSH's default provider/model is already deepseek-v4-flash, so this layer does
+# not override the user's explicit model selection or provider credentials.
+- id: tool-result-pruner
+  disabled: false
+  config:
+    thresholdChars: 8192
+    headChars: 4096
+    tailChars: 1024
+
+- id: compaction-basic
+  disabled: false
+  config:
+    thresholdRatio: 0.65
+    retainRatio: 0.14
+    maxTokens: 4096
+    auto: true
+
+- id: command-compact
+  disabled: false
+
+# The fallback title generator still labels sessions without another model call.
+- id: session-title-llm
+  disabled: true

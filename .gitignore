@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+*.log
+.DS_Store
+.inspect-*/
+.smoke-*/
+.token-config-test-home/
+.env
+.env.*
+!.env.example

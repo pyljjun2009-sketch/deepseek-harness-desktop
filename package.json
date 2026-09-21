@@ -1,0 +1,104 @@
+{
+  "name": "deepseek-harness-desktop",
+  "version": "0.1.0",
+  "author": "DeepSeek Harness Desktop Contributors",
+  "private": true,
+  "description": "A recovery-first desktop supervisor for DeepSeek Harness.",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:main": "tsc -p tsconfig.main.json --watch --preserveWatchOutput",
+    "dev:electron": "wait-on tcp:5173 file:dist-electron/electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "build": "npm run typecheck && vite build && tsc -p tsconfig.main.json",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm run test && npm run build",
+    "start": "electron .",
+    "pack": "npm run verify && electron-builder --dir",
+    "dist:win": "npm run verify && electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis-plugin-group": "1.0.2",
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-atomic-write": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-attachment": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-authorization": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-bash-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-brand": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-code-runtime": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-compaction": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-invariants": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-jobs": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-output-retention": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-sandbox": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-scope": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-query": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-telemetry": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-title-llm": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-shell": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-spill": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subagent-in-process-driver": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-timeout": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-workflow": "0.1.1-rc.2",
+    "lucide-react": "0.544.0",
+    "npm": "11.19.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "concurrently": "9.2.4",
+    "cross-env": "10.1.0",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "vitest": "5.0.1",
+    "wait-on": "9.1.0"
+  },
+  "build": {
+    "appId": "com.deepseek.harness.desktop",
+    "productName": "DeepSeek Harness Desktop",
+    "asar": false,
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "config/**/*",
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "DeepSeek-Harness-Desktop-${version}-${arch}.${ext}",
+      "executableName": "DeepSeekHarness"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
