@@ -52,6 +52,7 @@
 | Renderer 崩溃 | `render-process-gone` | 重建本地管理窗口 |
 | Desktop 主进程崩溃 | 外部 watchdog | 重新启动桌面程序 |
 | 状态文件损坏 | JSON 校验失败 | 读取 `.bak`，再回落到默认安全状态 |
+| Windows 安装路径过长 | 安装前检查目标路径 | 拒绝安装并要求选择更短目录，避免 NSIS 静默遗漏依赖 |
 
 ## 升级兼容策略
 

@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "DeepSeek Harness Desktop Contributors",
   "private": true,
   "description": "A recovery-first desktop supervisor for DeepSeek Harness.",
@@ -95,7 +95,8 @@
     "nsis": {
       "oneClick": false,
       "allowElevation": true,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
+      "include": "build/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false

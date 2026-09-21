@@ -18,8 +18,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # npm 11 can skip Electron's lifecycle downloader; electronDist requires
+      # the unpacked runtime to exist before electron-builder starts.
+      - run: node node_modules/electron/install.js
       - run: npm run verify
-      - run: npm run dist:win
+      - run: npx electron-builder --win nsis --x64 --publish never
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
