@@ -23,6 +23,7 @@ jobs:
       - run: node node_modules/electron/install.js
       - run: npm run verify
       - run: npx electron-builder --win nsis --x64 --publish never
+        timeout-minutes: 30
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}

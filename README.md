@@ -4,6 +4,8 @@
 
 当前恢复地板锁定为在独立托管 profile 上验证可用的 `@deepseek-ai/dsh@0.1.1-rc.2`；稳定通道会发现 npm `latest`，但只有通过完整候选预检和观察期才会晋升。2026-09-22 对 `0.1.5-rc.2` 的独立安装验证发现上游 Web 插件树缺少运行时依赖，本桌面版会拒绝激活该候选并继续运行稳定版；这不是已验证可用的升级。预览通道可以发现 alpha 版本，但默认不会自动安装。
 
+Windows x64 安装包：[下载 v0.2.0](https://github.com/pyljjun2009-sketch/deepseek-harness-desktop/releases/tag/desktop-v0.2.0)。安装包未签名；安装前可对照 Release 发布说明中的 SHA-256 校验值。
+
 ## 本地运行
 
 ```powershell
