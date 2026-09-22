@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "DeepSeek Harness Desktop Contributors",
   "private": true,
   "description": "A recovery-first desktop supervisor for DeepSeek Harness.",

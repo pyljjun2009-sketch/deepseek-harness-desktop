@@ -1,0 +1,13 @@
+# The bundled DSH 0.1.1-rc.2 Win32 native chooser disconnects its worker IPC
+# before the selected directory can be returned. Pin DSH's own in-app browser
+# interaction as a host/client pair so workspace selection remains available.
+# Keep this layer independent from the optional token-saving patch.
+- id: directory-picker
+  disabled: true
+
+- insert:
+    - id: desktop-directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+
+    - id: desktop-ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'

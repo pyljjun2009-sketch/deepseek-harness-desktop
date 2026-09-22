@@ -98,6 +98,7 @@ async function runCommand(
 export class RuntimeManager {
   readonly bundled: RuntimeRef;
   readonly harnessHome: string;
+  readonly desktopCompatPatchPath: string;
   readonly optimizationPatchPath: string;
   private readonly store: AtomicJsonStore<RecoveryState | LegacyRecoveryState>;
   private state?: RecoveryState;
@@ -112,7 +113,11 @@ export class RuntimeManager {
     // would let an incompatible global plugin prevent even the recovery runtime
     // from booting, which defeats the stable-floor guarantee.
     this.harnessHome = path.join(dataRoot, "harness-home");
-    this.optimizationPatchPath = path.resolve(__dirname, "..", "..", "config", "token-saving.patch.yml");
+    const packagedConfig = path.resolve(__dirname, "..", "..", "config");
+    const sourceConfig = path.resolve(__dirname, "..", "config");
+    const configRoot = existsSync(packagedConfig) ? packagedConfig : sourceConfig;
+    this.desktopCompatPatchPath = path.join(configRoot, "desktop-compat.patch.yml");
+    this.optimizationPatchPath = path.join(configRoot, "token-saving.patch.yml");
     this.store = new AtomicJsonStore(
       path.join(dataRoot, "recovery", "state.json"),
       () => createDefaultState(this.bundled),
@@ -173,8 +178,11 @@ export class RuntimeManager {
     };
   }
 
-  getOptimizationArguments(): string[] {
-    return this.getState().tokenSavingEnabled ? ["--patch", this.optimizationPatchPath] : [];
+  getWebPatchArguments(): string[] {
+    if (!existsSync(this.desktopCompatPatchPath)) throw new Error("桌面兼容配置文件缺失");
+    const args = ["--patch", this.desktopCompatPatchPath];
+    if (this.getState().tokenSavingEnabled) args.push("--patch", this.optimizationPatchPath);
+    return args;
   }
 
   async setTokenSaving(enabled: boolean): Promise<void> {
@@ -275,7 +283,7 @@ export class RuntimeManager {
             process.execPath,
             path.join(stagingRoot, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
             smokeHome,
-            this.getOptimizationArguments(),
+            this.getWebPatchArguments(),
             this.log
           );
           await rename(stagingRoot, finalRoot);
@@ -285,7 +293,7 @@ export class RuntimeManager {
         }
       } else {
         await this.smokeTest(binPath, smokeHome);
-        await smokeWebRuntime(process.execPath, binPath, smokeHome, this.getOptimizationArguments(), this.log);
+        await smokeWebRuntime(process.execPath, binPath, smokeHome, this.getWebPatchArguments(), this.log);
       }
       return { source: "managed", version, binPath };
     } finally {
@@ -317,7 +325,7 @@ export class RuntimeManager {
       });
       // DSH refreshes profile dependency links for this runtime in the clone.
       await this.smokeTest(candidate.binPath, candidateHome);
-      await smokeWebRuntime(process.execPath, candidate.binPath, candidateHome, this.getOptimizationArguments(), this.log);
+      await smokeWebRuntime(process.execPath, candidate.binPath, candidateHome, this.getWebPatchArguments(), this.log);
       this.state = {
         ...previous,
         active: candidate,
@@ -380,7 +388,7 @@ export class RuntimeManager {
     await runCommand(process.execPath, [binPath, "--version"], { timeoutMs: 15_000, env }, this.log);
     await runCommand(
       process.execPath,
-      [binPath, "--profile", "web", ...this.getOptimizationArguments(), "--dump-config"],
+      [binPath, "--profile", "web", ...this.getWebPatchArguments(), "--dump-config"],
       { timeoutMs: 30_000, env },
       this.log
     );

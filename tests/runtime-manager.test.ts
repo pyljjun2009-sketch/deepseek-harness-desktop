@@ -42,6 +42,16 @@ process.exit(1);
 }
 
 describe("runtime profile isolation", () => {
+  it("keeps the safe directory browser active when token saving is disabled", async () => {
+    const { manager } = await fixture();
+    expect(manager.getWebPatchArguments()).toEqual([
+      "--patch", manager.desktopCompatPatchPath,
+      "--patch", manager.optimizationPatchPath
+    ]);
+    await manager.setTokenSaving(false);
+    expect(manager.getWebPatchArguments()).toEqual(["--patch", manager.desktopCompatPatchPath]);
+  });
+
   it("activates a cloned home and rolls runtime and home back together", async () => {
     const { manager, managed } = await fixture();
     await writeFile(path.join(manager.harnessHome, "session.txt"), "stable session", "utf8");

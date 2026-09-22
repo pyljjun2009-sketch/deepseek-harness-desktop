@@ -6,6 +6,7 @@ coverage/
 *.log
 .DS_Store
 .inspect-*/
+.playwright-cli/
 .smoke-*/
 .token-config-test-home/
 .env

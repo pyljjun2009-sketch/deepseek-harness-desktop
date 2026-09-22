@@ -49,6 +49,18 @@ async function terminate(child) {
   });
 }
 
+function assertBrowsePickerConfig(config) {
+  const marker = "- id: directory-picker";
+  const start = config.indexOf(marker);
+  const next = config.indexOf("\n- id:", start + marker.length);
+  const autoRow = start < 0 ? "" : config.slice(start, next < 0 ? undefined : next);
+  if (!/\bdisabled: true\b/.test(autoRow) ||
+      !config.includes("name: '@deepseek-ai/dsh-host-directory-picker-browse'") ||
+      !config.includes("name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'")) {
+    throw new Error("Packaged runtime did not compose the safe in-app directory picker");
+  }
+}
+
 async function main() {
   const appRoot = path.resolve(process.argv[2]);
   const version = process.argv[3] ?? "bundled";
@@ -61,13 +73,25 @@ async function main() {
     });
     await manager.initialize();
     await new Promise((resolve, reject) => {
-      const setup = spawn(process.execPath, [manager.getActive().binPath, "--profile", "web", "--dump-config"], {
+      let config = "";
+      let errors = "";
+      const setup = spawn(process.execPath, [
+        manager.getActive().binPath,
+        "--profile", "web",
+        ...manager.getWebPatchArguments(),
+        "--dump-config"
+      ], {
         env: { ...manager.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
         windowsHide: true,
-        stdio: "ignore"
+        stdio: ["ignore", "pipe", "pipe"]
       });
+      setup.stdout.on("data", (chunk) => { config += String(chunk); });
+      setup.stderr.on("data", (chunk) => { errors += String(chunk); });
       setup.once("error", reject);
-      setup.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`Bundled profile setup exited ${code}`)));
+      setup.once("exit", (code) => {
+        if (code !== 0) return reject(new Error(`Bundled profile setup exited ${code}: ${errors}`));
+        try { assertBrowsePickerConfig(config); resolve(); } catch (error) { reject(error); }
+      });
     });
     await writeFile(path.join(manager.harnessHome, "smoke-session.txt"), "stable");
     const brokenBin = path.join(testRoot, "runtimes", "0.2.0", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
@@ -98,7 +122,7 @@ console.error("PACKAGED_BROKEN_WEB"); process.exit(1);
     if (await readFile(path.join(manager.harnessHome, "smoke-session.txt"), "utf8") !== "stable") {
       throw new Error("Candidate changed stable profile data");
     }
-    child = spawn(process.execPath, [candidate.binPath, "web", "--host", "127.0.0.1", "--port", "0", "--no-open"], {
+    child = spawn(process.execPath, [candidate.binPath, "web", ...manager.getWebPatchArguments(), "--host", "127.0.0.1", "--port", "0", "--no-open"], {
       env: { ...manager.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
@@ -121,7 +145,7 @@ console.error("PACKAGED_BROKEN_WEB"); process.exit(1);
         await readFile(path.join(candidateHome, "smoke-session.txt"), "utf8") !== "candidate") {
       throw new Error("Rollback did not restore stable profile and preserve candidate data");
     }
-    child = spawn(process.execPath, [manager.getActive().binPath, "web", "--host", "127.0.0.1", "--port", "0", "--no-open"], {
+    child = spawn(process.execPath, [manager.getActive().binPath, "web", ...manager.getWebPatchArguments(), "--host", "127.0.0.1", "--port", "0", "--no-open"], {
       env: { ...manager.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
@@ -131,7 +155,7 @@ console.error("PACKAGED_BROKEN_WEB"); process.exit(1);
     if (restoredResponse.status < 200 || restoredResponse.status >= 400) {
       throw new Error(`Restored stable runtime returned HTTP ${restoredResponse.status}`);
     }
-    process.stdout.write(JSON.stringify({ version: candidate.version, origin: new URL(url).origin, bareStatus: bareResponse.status, tokenStatus: response.status, brokenCandidateRejected: true, profileIsolation: true, rollback: true, restoredStatus: restoredResponse.status }) + "\n");
+    process.stdout.write(JSON.stringify({ version: candidate.version, origin: new URL(url).origin, bareStatus: bareResponse.status, tokenStatus: response.status, browsePicker: true, brokenCandidateRejected: true, profileIsolation: true, rollback: true, restoredStatus: restoredResponse.status }) + "\n");
   } finally {
     if (child) await terminate(child);
     await rm(testRoot, { recursive: true, force: true });

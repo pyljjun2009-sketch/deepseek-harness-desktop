@@ -137,7 +137,7 @@ export class HarnessSupervisor extends EventEmitter {
 
     const child = spawn(
       process.execPath,
-      [active.binPath, "web", ...this.runtime.getOptimizationArguments(), "--host", "127.0.0.1", "--port", "0", "--no-open"],
+      [active.binPath, "web", ...this.runtime.getWebPatchArguments(), "--host", "127.0.0.1", "--port", "0", "--no-open"],
       {
         env: { ...this.runtime.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
         windowsHide: true,
