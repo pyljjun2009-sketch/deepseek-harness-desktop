@@ -1,15 +1,34 @@
 import type { RuntimeChannel, RuntimeRef } from "../shared/contracts";
 
 export interface RecoveryState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   channel: RuntimeChannel;
   active: RuntimeRef;
   lastKnownGood: RuntimeRef;
   candidate?: RuntimeRef;
+  activeHomeId: string;
+  lastKnownGoodHomeId: string;
+  candidateHomeId?: string;
   crashTimestamps: string[];
   rollbackCount: number;
   tokenSavingEnabled: boolean;
   updatedAt: string;
+}
+
+export type LegacyRecoveryState = Omit<
+  RecoveryState,
+  "schemaVersion" | "activeHomeId" | "lastKnownGoodHomeId" | "candidateHomeId"
+> & { schemaVersion: 1 };
+
+export function migrateRecoveryState(state: RecoveryState | LegacyRecoveryState): RecoveryState {
+  if (state.schemaVersion === 2) return state;
+  return {
+    ...state,
+    schemaVersion: 2,
+    activeHomeId: "default",
+    lastKnownGoodHomeId: "default",
+    candidateHomeId: state.candidate ? "default" : undefined
+  };
 }
 
 export type RecoveryAction = "retry" | "rollback" | "fallback-bundled" | "stop";
@@ -28,10 +47,12 @@ export function sameRuntime(left: RuntimeRef, right: RuntimeRef): boolean {
 
 export function createDefaultState(bundled: RuntimeRef): RecoveryState {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     channel: "stable",
     active: bundled,
     lastKnownGood: bundled,
+    activeHomeId: "default",
+    lastKnownGoodHomeId: "default",
     crashTimestamps: [],
     rollbackCount: 0,
     tokenSavingEnabled: true,
@@ -55,7 +76,9 @@ export function decideAfterFailure(
       state: {
         ...current,
         active: current.lastKnownGood,
+        activeHomeId: current.lastKnownGoodHomeId,
         candidate: undefined,
+        candidateHomeId: undefined,
         crashTimestamps,
         rollbackCount: current.rollbackCount + 1,
         updatedAt: now.toISOString()
@@ -71,7 +94,10 @@ export function decideAfterFailure(
           ...current,
           active: bundled,
           lastKnownGood: bundled,
+          activeHomeId: "default",
+          lastKnownGoodHomeId: "default",
           candidate: undefined,
+          candidateHomeId: undefined,
           crashTimestamps: [],
           rollbackCount: current.rollbackCount + 1,
           updatedAt: now.toISOString()
@@ -104,7 +130,9 @@ export function promoteCandidate(current: RecoveryState, now = new Date()): Reco
   return {
     ...current,
     lastKnownGood: activeCandidate ? current.active : current.lastKnownGood,
+    lastKnownGoodHomeId: activeCandidate ? current.activeHomeId : current.lastKnownGoodHomeId,
     candidate: activeCandidate ? undefined : current.candidate,
+    candidateHomeId: activeCandidate ? undefined : current.candidateHomeId,
     crashTimestamps: [],
     updatedAt: now.toISOString()
   };

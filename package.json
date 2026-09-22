@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": "DeepSeek Harness Desktop Contributors",
   "private": true,
   "description": "A recovery-first desktop supervisor for DeepSeek Harness.",
@@ -16,6 +16,7 @@
     "verify": "npm run typecheck && npm run test && npm run build",
     "start": "electron .",
     "pack": "npm run verify && electron-builder --dir",
+    "smoke:packaged": "node scripts/run-packaged-smoke.cjs",
     "dist:win": "npm run verify && electron-builder --win nsis --x64"
   },
   "dependencies": {

@@ -315,7 +315,7 @@ function App() {
                     <div><small>可用</small><strong>{snapshot.latestUpdate?.latest ?? "点击检查"}</strong></div>
                   </div>
                   <p className="muted">
-                    新版本先进入隔离候选槽。只有通过配置烟测、启动探测和 45 秒观察期，才会成为稳定版本。
+                    新版本先在临时目录预检，再复制当前数据到隔离候选槽。升级会重启工作台；请先结束正在运行的任务。候选通过配置、启动和 45 秒观察后才晋升。
                   </p>
                   <div className="panel-actions">
                     <button
@@ -330,11 +330,12 @@ function App() {
                       <button
                         type="button"
                         className="button primary"
-                        onClick={() =>
+                        onClick={() => {
+                          if (!window.confirm("升级会停止当前工作台和进行中的任务，并复制会话数据。确认现在安装候选版？")) return;
                           void run("install", () =>
                             window.harnessDesktop.installUpdate(snapshot.latestUpdate!.latest)
-                          )
-                        }
+                          );
+                        }}
                         disabled={Boolean(busy)}
                       >
                         <HardDriveDownload size={16} /> 安装候选版
@@ -353,7 +354,7 @@ function App() {
                   </div>
                   <ol className="protection-list">
                     <li><span><Check size={13} /></span><div><strong>进程级自愈</strong><small>健康检查失败后指数退避重启</small></div></li>
-                    <li><span><Check size={13} /></span><div><strong>版本级回滚</strong><small>候选异常立即切回 {snapshot.lastKnownGoodVersion}</small></div></li>
+                    <li><span><Check size={13} /></span><div><strong>版本与数据回滚</strong><small>候选重试失败后切回 {snapshot.lastKnownGoodVersion} 及稳定数据槽</small></div></li>
                     <li><span><Check size={13} /></span><div><strong>桌面级看门狗</strong><small>主进程异常退出后重新拉起</small></div></li>
                   </ol>
                 </article>

@@ -1,13 +1,13 @@
 const { spawn } = require("node:child_process");
-const { mkdtemp, rm } = require("node:fs/promises");
+const { mkdtemp, mkdir, readFile, rm, writeFile } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 
-async function waitForUrl(child, timeoutMs) {
+async function waitForUrl(child, timeoutMs, stage) {
   return await new Promise((resolve, reject) => {
     let combined = "";
     const buffers = { stdout: "", stderr: "" };
-    const timer = setTimeout(() => reject(new Error(`web startup timed out: ${combined}`)), timeoutMs);
+    const timer = setTimeout(() => reject(new Error(`${stage} web startup timed out (pid ${child.pid}): ${combined}${buffers.stdout}${buffers.stderr}`)), timeoutMs);
     const consume = (stream, chunk) => {
       buffers[stream] += String(chunk);
       const lines = buffers[stream].split(/\r?\n/);
@@ -51,7 +51,7 @@ async function terminate(child) {
 
 async function main() {
   const appRoot = path.resolve(process.argv[2]);
-  const version = process.argv[3] ?? "0.1.5-rc.2";
+  const version = process.argv[3] ?? "bundled";
   const { RuntimeManager } = require(path.join(appRoot, "dist-electron", "electron", "runtime-manager.js"));
   const testRoot = await mkdtemp(path.join(os.tmpdir(), "dsh-desktop-update-"));
   let child;
@@ -60,13 +60,50 @@ async function main() {
       if (/error|warn/i.test(message)) process.stderr.write(`[${scope}] ${message}\n`);
     });
     await manager.initialize();
-    const candidate = await manager.installCandidate(version);
+    await new Promise((resolve, reject) => {
+      const setup = spawn(process.execPath, [manager.getActive().binPath, "--profile", "web", "--dump-config"], {
+        env: { ...manager.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
+        windowsHide: true,
+        stdio: "ignore"
+      });
+      setup.once("error", reject);
+      setup.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`Bundled profile setup exited ${code}`)));
+    });
+    await writeFile(path.join(manager.harnessHome, "smoke-session.txt"), "stable");
+    const brokenBin = path.join(testRoot, "runtimes", "0.2.0", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+    await mkdir(path.dirname(brokenBin), { recursive: true });
+    await writeFile(brokenBin, `
+if (process.argv.includes("--version")) { console.log("0.2.0"); process.exit(0); }
+if (process.argv.includes("--dump-config")) process.exit(0);
+console.error("PACKAGED_BROKEN_WEB"); process.exit(1);
+`, "utf8");
+    let rejected = false;
+    try {
+      await manager.installCandidate("0.2.0");
+    } catch (error) {
+      rejected = /PACKAGED_BROKEN_WEB/.test(String(error));
+    }
+    if (!rejected || manager.getState().activeHomeId !== "default" || manager.getActive().source !== "bundled") {
+      throw new Error("Broken candidate was not rejected before profile activation");
+    }
+    const candidate = version === "bundled"
+      ? { source: "managed", version: manager.bundled.version, binPath: manager.bundled.binPath }
+      : await manager.installCandidate(version);
+    await manager.activateCandidate(candidate);
+    const candidateHome = manager.getHarnessEnvironment().DSH_HOME;
+    if (candidateHome === manager.harnessHome || await readFile(path.join(candidateHome, "smoke-session.txt"), "utf8") !== "stable") {
+      throw new Error("Candidate profile was not isolated and cloned");
+    }
+    await writeFile(path.join(candidateHome, "smoke-session.txt"), "candidate");
+    if (await readFile(path.join(manager.harnessHome, "smoke-session.txt"), "utf8") !== "stable") {
+      throw new Error("Candidate changed stable profile data");
+    }
     child = spawn(process.execPath, [candidate.binPath, "web", "--host", "127.0.0.1", "--port", "0", "--no-open"], {
       env: { ...manager.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    const url = await waitForUrl(child, 45_000);
+    const url = await waitForUrl(child, 45_000, "candidate");
     const bareResponse = await fetch(new URL(url).origin + "/", { redirect: "manual" });
     if (bareResponse.status < 200 || (bareResponse.status >= 400 && bareResponse.status !== 401)) {
       throw new Error(`Bare-origin HTTP probe returned ${bareResponse.status}`);
@@ -75,7 +112,26 @@ async function main() {
     if (response.status < 200 || response.status >= 400) {
       throw new Error(`HTTP probe returned ${response.status}`);
     }
-    process.stdout.write(JSON.stringify({ version: candidate.version, origin: new URL(url).origin, bareStatus: bareResponse.status, tokenStatus: response.status }) + "\n");
+    await terminate(child);
+    child = undefined;
+    if (await manager.recordFailure() !== "retry" || await manager.recordFailure() !== "rollback") {
+      throw new Error("Candidate did not roll back after failed probation");
+    }
+    if (manager.getHarnessEnvironment().DSH_HOME !== manager.harnessHome ||
+        await readFile(path.join(candidateHome, "smoke-session.txt"), "utf8") !== "candidate") {
+      throw new Error("Rollback did not restore stable profile and preserve candidate data");
+    }
+    child = spawn(process.execPath, [manager.getActive().binPath, "web", "--host", "127.0.0.1", "--port", "0", "--no-open"], {
+      env: { ...manager.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const restoredUrl = await waitForUrl(child, 45_000, "restored stable");
+    const restoredResponse = await fetch(restoredUrl, { redirect: "manual" });
+    if (restoredResponse.status < 200 || restoredResponse.status >= 400) {
+      throw new Error(`Restored stable runtime returned HTTP ${restoredResponse.status}`);
+    }
+    process.stdout.write(JSON.stringify({ version: candidate.version, origin: new URL(url).origin, bareStatus: bareResponse.status, tokenStatus: response.status, brokenCandidateRejected: true, profileIsolation: true, rollback: true, restoredStatus: restoredResponse.status }) + "\n");
   } finally {
     if (child) await terminate(child);
     await rm(testRoot, { recursive: true, force: true });

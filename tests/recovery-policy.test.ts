@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   createDefaultState,
   decideAfterFailure,
+  migrateRecoveryState,
   promoteCandidate,
+  type LegacyRecoveryState,
   type RecoveryState
 } from "../electron/recovery-policy";
 import type { RuntimeRef } from "../shared/contracts";
@@ -24,12 +26,16 @@ describe("recovery policy", () => {
     const state: RecoveryState = {
       ...createDefaultState(bundled),
       active: candidate,
-      candidate
+      candidate,
+      activeHomeId: "slot-candidate",
+      candidateHomeId: "slot-candidate"
     };
     const decision = decideAfterFailure(state, bundled, new Date("2026-09-21T08:00:00Z"));
     expect(decision.action).toBe("rollback");
     expect(decision.state.active).toEqual(bundled);
+    expect(decision.state.activeHomeId).toBe("default");
     expect(decision.state.candidate).toBeUndefined();
+    expect(decision.state.candidateHomeId).toBeUndefined();
     expect(decision.state.rollbackCount).toBe(1);
   });
 
@@ -37,10 +43,13 @@ describe("recovery policy", () => {
     const state: RecoveryState = {
       ...createDefaultState(bundled),
       active: candidate,
-      candidate
+      candidate,
+      activeHomeId: "slot-candidate",
+      candidateHomeId: "slot-candidate"
     };
     const promoted = promoteCandidate(state, new Date("2026-09-21T08:01:00Z"));
     expect(promoted.lastKnownGood).toEqual(candidate);
+    expect(promoted.lastKnownGoodHomeId).toBe("slot-candidate");
     expect(promoted.candidate).toBeUndefined();
   });
 
@@ -58,7 +67,9 @@ describe("recovery policy", () => {
     let state: RecoveryState = {
       ...createDefaultState(bundled),
       active: candidate,
-      lastKnownGood: candidate
+      lastKnownGood: candidate,
+      activeHomeId: "slot-stable",
+      lastKnownGoodHomeId: "slot-stable"
     };
     const first = decideAfterFailure(state, bundled, new Date("2026-09-21T08:00:00Z"));
     expect(first.action).toBe("retry");
@@ -69,6 +80,8 @@ describe("recovery policy", () => {
     expect(third.action).toBe("fallback-bundled");
     expect(third.state.active).toEqual(bundled);
     expect(third.state.lastKnownGood).toEqual(bundled);
+    expect(third.state.activeHomeId).toBe("default");
+    expect(third.state.lastKnownGoodHomeId).toBe("default");
   });
 
   it("stops instead of looping forever when the bundled runtime is broken", () => {
@@ -77,5 +90,18 @@ describe("recovery policy", () => {
     state = decideAfterFailure(state, bundled, new Date("2026-09-21T08:00:10Z")).state;
     const final = decideAfterFailure(state, bundled, new Date("2026-09-21T08:00:20Z"));
     expect(final.action).toBe("stop");
+  });
+
+  it("migrates version-one state without losing its profile pointer", () => {
+    const { activeHomeId, lastKnownGoodHomeId, candidateHomeId, ...current } = createDefaultState(bundled);
+    void activeHomeId;
+    void lastKnownGoodHomeId;
+    void candidateHomeId;
+    const legacy: LegacyRecoveryState = { ...current, schemaVersion: 1, candidate };
+    const migrated = migrateRecoveryState(legacy);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.activeHomeId).toBe("default");
+    expect(migrated.lastKnownGoodHomeId).toBe("default");
+    expect(migrated.candidateHomeId).toBe("default");
   });
 });

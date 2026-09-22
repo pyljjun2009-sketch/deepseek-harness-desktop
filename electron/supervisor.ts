@@ -94,16 +94,33 @@ export class HarnessSupervisor extends EventEmitter {
   async activateInstalledCandidate(version: string): Promise<void> {
     const previousStatus = this.status;
     const previousMessage = this.message;
+    const wasRunning = Boolean(this.child);
     this.status = "updating";
     this.message = `正在安装 ${version}`;
     this.emitSnapshot();
     try {
-      await this.runtime.installCandidate(version);
-      await this.restart();
-    } catch (error) {
-      this.status = previousStatus;
-      this.message = previousMessage;
+      const candidate = await this.runtime.installCandidate(version);
+      // A profile snapshot is only consistent after its current writer stops.
+      if (wasRunning) await this.stop();
+      this.message = `正在隔离验证 ${version} 的用户数据`;
       this.emitSnapshot();
+      try {
+        await this.runtime.activateCandidate(candidate);
+      } catch (error) {
+        if (wasRunning) await this.start();
+        throw error;
+      }
+      await this.start();
+    } catch (error) {
+      if (this.child || !wasRunning) {
+        this.status = previousStatus;
+        this.message = previousMessage;
+        this.emitSnapshot();
+      } else {
+        this.status = "faulted";
+        this.message = "升级失败，原运行时未能重新启动；请查看日志";
+        this.emitSnapshot();
+      }
       throw error;
     }
   }

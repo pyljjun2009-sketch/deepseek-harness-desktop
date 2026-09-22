@@ -1,17 +1,21 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AvailableUpdate, RuntimeChannel, RuntimeRef } from "../shared/contracts";
 import { AtomicJsonStore } from "./atomic-store";
 import {
   createDefaultState,
   decideAfterFailure,
+  migrateRecoveryState,
   promoteCandidate,
+  type LegacyRecoveryState,
   type RecoveryAction,
   type RecoveryState
 } from "./recovery-policy";
 import { compareVersions, isSafeVersion, selectChannelVersion } from "./versioning";
+import { smokeWebRuntime } from "./web-smoke";
 
 type LogFunction = (scope: string, message: string) => void;
 
@@ -30,11 +34,23 @@ function isRuntimeRef(value: unknown): value is RuntimeRef {
   );
 }
 
-function isRecoveryState(value: unknown): value is RecoveryState {
+function isSafeHomeId(value: unknown): value is string {
+  return value === "default" || (
+    typeof value === "string" &&
+    /^slot-[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/.test(value) &&
+    !value.includes("..")
+  );
+}
+
+function isRecoveryState(value: unknown): value is RecoveryState | LegacyRecoveryState {
   if (!value || typeof value !== "object") return false;
-  const state = value as Partial<RecoveryState>;
+  const state = value as Record<string, unknown>;
   return (
-    state.schemaVersion === 1 &&
+    (state.schemaVersion === 1 || state.schemaVersion === 2) &&
+    (state.schemaVersion !== 2 ||
+      (isSafeHomeId(state.activeHomeId) &&
+        isSafeHomeId(state.lastKnownGoodHomeId) &&
+        (state.candidateHomeId === undefined || isSafeHomeId(state.candidateHomeId)))) &&
     (state.channel === "stable" || state.channel === "preview") &&
     isRuntimeRef(state.active) &&
     isRuntimeRef(state.lastKnownGood) &&
@@ -83,7 +99,7 @@ export class RuntimeManager {
   readonly bundled: RuntimeRef;
   readonly harnessHome: string;
   readonly optimizationPatchPath: string;
-  private readonly store: AtomicJsonStore<RecoveryState>;
+  private readonly store: AtomicJsonStore<RecoveryState | LegacyRecoveryState>;
   private state?: RecoveryState;
 
   constructor(
@@ -106,21 +122,35 @@ export class RuntimeManager {
 
   async initialize(): Promise<void> {
     await mkdir(this.harnessHome, { recursive: true });
-    this.state = await this.store.read();
-    if (this.state.tokenSavingEnabled === undefined) {
-      this.state = { ...this.state, tokenSavingEnabled: true };
+    const stored = await this.store.read();
+    this.state = migrateRecoveryState(stored);
+    if (stored.schemaVersion === 1 || this.state.tokenSavingEnabled === undefined) {
+      this.state = { ...this.state, tokenSavingEnabled: this.state.tokenSavingEnabled ?? true };
       await this.persist();
     }
     const bundledPointerChanged =
       this.state.active.source === "bundled" &&
       (this.state.active.version !== this.bundled.version ||
         path.resolve(this.state.active.binPath) !== path.resolve(this.bundled.binPath));
-    if (!existsSync(this.state.active.binPath) || bundledPointerChanged) {
-      this.log("recovery", "活动运行时文件缺失或捆绑版本已变化，重建安全基线");
+    if (!existsSync(this.state.active.binPath) ||
+        !existsSync(this.resolveHomePath(this.state.activeHomeId)) || bundledPointerChanged) {
+      this.log("recovery", "活动运行时或数据槽缺失，或捆绑版本已变化；重建安全基线");
       this.state = {
         ...createDefaultState(this.bundled),
         channel: this.state.channel,
         tokenSavingEnabled: this.state.tokenSavingEnabled
+      };
+      await this.persist();
+      return;
+    }
+    if (!existsSync(this.state.lastKnownGood.binPath) ||
+        !existsSync(this.resolveHomePath(this.state.lastKnownGoodHomeId))) {
+      this.log("recovery", "上一稳定槽缺失，回滚目标已重建为捆绑版本");
+      this.state = {
+        ...this.state,
+        lastKnownGood: this.bundled,
+        lastKnownGoodHomeId: "default",
+        updatedAt: new Date().toISOString()
       };
       await this.persist();
     }
@@ -135,10 +165,10 @@ export class RuntimeManager {
     return this.getState().active;
   }
 
-  getHarnessEnvironment(): NodeJS.ProcessEnv {
+  getHarnessEnvironment(homePath = this.resolveHomePath(this.getState().activeHomeId)): NodeJS.ProcessEnv {
     return {
       ...process.env,
-      DSH_HOME: this.harnessHome,
+      DSH_HOME: homePath,
       DSH_DESKTOP: "1"
     };
   }
@@ -189,73 +219,120 @@ export class RuntimeManager {
     const binPath = path.join(finalRoot, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
 
     await mkdir(runtimesRoot, { recursive: true });
-    if (!existsSync(binPath)) {
-      const stagingRoot = path.join(runtimesRoot, `.staging-${version}-${Date.now()}`);
-      await mkdir(stagingRoot, { recursive: true });
-      try {
-        // npm 11 denies undeclared dependency lifecycle scripts by default.
-        // Fail closed on new scripts while allowing the reviewed native helpers
-        // used by current DSH releases. A new script requires a desktop update.
-        await writeFile(
-          path.join(stagingRoot, "package.json"),
-          JSON.stringify({
-            name: "deepseek-harness-managed-runtime",
-            private: true,
-            version: "0.0.0",
-            allowScripts: {
-              "@deepseek-ai/dsh-subprocess-local": true,
-              "koffi": true,
-              "node-pty": true,
-              "@google/genai": false,
-              "protobufjs": false
-            }
-          }),
-          "utf8"
-        );
-        const npmPackagePath = require.resolve("npm/package.json");
-        const npmCliPath = path.join(path.dirname(npmPackagePath), "bin", "npm-cli.js");
-        await runCommand(
-          process.execPath,
-          [
-            npmCliPath,
-            "install",
-            "--prefix",
-            stagingRoot,
-            "--save-exact",
-            "--omit=dev",
-            "--no-audit",
-            "--no-fund",
-            "--strict-allow-scripts",
-            `@deepseek-ai/dsh@${version}`
-          ],
-          {
-            timeoutMs: 180_000,
-            env: { ...this.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" }
-          },
-          this.log
-        );
-        await this.smokeTest(
-          path.join(stagingRoot, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
-        );
-        await rename(stagingRoot, finalRoot);
-      } catch (error) {
-        await rm(stagingRoot, { recursive: true, force: true });
-        throw error;
+    const smokeHome = path.join(this.dataRoot, "update-smoke", `${version}-${randomUUID()}`);
+    await mkdir(smokeHome, { recursive: true });
+    try {
+      if (!existsSync(binPath)) {
+        const stagingRoot = path.join(runtimesRoot, `.staging-${version}-${Date.now()}`);
+        await mkdir(stagingRoot, { recursive: true });
+        try {
+          // npm 11 denies undeclared dependency lifecycle scripts by default.
+          // Fail closed on new scripts while allowing the reviewed native helpers
+          // used by current DSH releases. A new script requires a desktop update.
+          await writeFile(
+            path.join(stagingRoot, "package.json"),
+            JSON.stringify({
+              name: "deepseek-harness-managed-runtime",
+              private: true,
+              version: "0.0.0",
+              allowScripts: {
+                "@deepseek-ai/dsh-subprocess-local": true,
+                "koffi": true,
+                "node-pty": true,
+                "@google/genai": false,
+                "protobufjs": false
+              }
+            }),
+            "utf8"
+          );
+          const npmPackagePath = require.resolve("npm/package.json");
+          const npmCliPath = path.join(path.dirname(npmPackagePath), "bin", "npm-cli.js");
+          await runCommand(
+            process.execPath,
+            [
+              npmCliPath,
+              "install",
+              "--prefix",
+              stagingRoot,
+              "--save-exact",
+              "--omit=dev",
+              "--no-audit",
+              "--no-fund",
+              "--strict-allow-scripts",
+              `@deepseek-ai/dsh@${version}`,
+              // Current upstream app-boot imports this package without declaring
+              // it in the isolated npm dependency closure.
+              "@deepseek-ai/cordis-plugin-group@1.0.2"
+            ],
+            {
+              timeoutMs: 180_000,
+              env: { ...this.getHarnessEnvironment(smokeHome), ELECTRON_RUN_AS_NODE: "1" }
+            },
+            this.log
+          );
+          await this.smokeTest(path.join(stagingRoot, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"), smokeHome);
+          await smokeWebRuntime(
+            process.execPath,
+            path.join(stagingRoot, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
+            smokeHome,
+            this.getOptimizationArguments(),
+            this.log
+          );
+          await rename(stagingRoot, finalRoot);
+        } catch (error) {
+          await rm(stagingRoot, { recursive: true, force: true });
+          throw error;
+        }
+      } else {
+        await this.smokeTest(binPath, smokeHome);
+        await smokeWebRuntime(process.execPath, binPath, smokeHome, this.getOptimizationArguments(), this.log);
       }
-    } else {
-      await this.smokeTest(binPath);
+      return { source: "managed", version, binPath };
+    } finally {
+      await rm(smokeHome, { recursive: true, force: true });
     }
+  }
 
-    const candidate: RuntimeRef = { source: "managed", version, binPath };
-    this.state = {
-      ...this.getState(),
-      active: candidate,
-      candidate,
-      updatedAt: new Date().toISOString()
-    };
-    await this.persist();
-    this.log("update", `候选运行时 ${version} 已激活，等待观察期`);
-    return candidate;
+  // Call only after the supervisor has stopped the active DSH writer.
+  async activateCandidate(candidate: RuntimeRef): Promise<void> {
+    if (candidate.source !== "managed" || !isSafeVersion(candidate.version) || !existsSync(candidate.binPath)) {
+      throw new Error("候选运行时无效");
+    }
+    const previous = this.getState();
+    const homeId = `slot-${candidate.version}-${randomUUID()}`;
+    const candidateHome = this.resolveHomePath(homeId);
+    const activeHome = this.resolveHomePath(previous.activeHomeId);
+    const generatedLinks = path.join(activeHome, "profiles", "node_modules").toLowerCase();
+    await mkdir(path.dirname(candidateHome), { recursive: true });
+    try {
+      await cp(activeHome, candidateHome, {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        dereference: false,
+        verbatimSymlinks: true,
+        // DSH owns this dependency projection. Copying its Windows junctions
+        // requires symlink privileges and retains links to the old runtime.
+        filter: (source) => path.resolve(source).toLowerCase() !== generatedLinks
+      });
+      // DSH refreshes profile dependency links for this runtime in the clone.
+      await this.smokeTest(candidate.binPath, candidateHome);
+      await smokeWebRuntime(process.execPath, candidate.binPath, candidateHome, this.getOptimizationArguments(), this.log);
+      this.state = {
+        ...previous,
+        active: candidate,
+        activeHomeId: homeId,
+        candidate,
+        candidateHomeId: homeId,
+        updatedAt: new Date().toISOString()
+      };
+      await this.persist();
+      this.log("update", `候选运行时 ${candidate.version} 已激活，独立数据槽 ${homeId} 正在观察`);
+    } catch (error) {
+      this.state = previous;
+      await rm(candidateHome, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async markHealthy(): Promise<void> {
@@ -292,9 +369,14 @@ export class RuntimeManager {
     return decision.action;
   }
 
-  private async smokeTest(binPath: string): Promise<void> {
+  private resolveHomePath(homeId: string): string {
+    if (!isSafeHomeId(homeId)) throw new Error("数据槽标识无效");
+    return homeId === "default" ? this.harnessHome : path.join(this.dataRoot, "profile-homes", homeId);
+  }
+
+  private async smokeTest(binPath: string, homePath: string): Promise<void> {
     if (!existsSync(binPath)) throw new Error("候选运行时缺少 dsh 入口文件");
-    const env = { ...this.getHarnessEnvironment(), ELECTRON_RUN_AS_NODE: "1" };
+    const env = { ...this.getHarnessEnvironment(homePath), ELECTRON_RUN_AS_NODE: "1" };
     await runCommand(process.execPath, [binPath, "--version"], { timeoutMs: 15_000, env }, this.log);
     await runCommand(
       process.execPath,

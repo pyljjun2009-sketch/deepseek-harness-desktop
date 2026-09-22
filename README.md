@@ -2,7 +2,7 @@
 
 面向 Windows 的 DeepSeek Harness 桌面管理器。它不是对 Harness 的分叉，而是把官方 `@deepseek-ai/dsh` 作为可替换运行时，由一个独立桌面监督层负责启动、健康检查、升级、回滚和诊断。桌面版使用独立的托管 profile 目录，保持 DSH profile 与插件格式兼容，同时避免全局 `~/.dsh` 中的旧插件破坏恢复基线。
 
-当前恢复地板锁定为在独立托管 profile 上验证可用的 `@deepseek-ai/dsh@0.1.1-rc.2`；稳定通道会发现 npm `latest`（本次验证为 `0.1.5-rc.2`），但只有通过完整候选观察期才会晋升。预览通道可以发现 alpha 版本，但默认不会自动安装。
+当前恢复地板锁定为在独立托管 profile 上验证可用的 `@deepseek-ai/dsh@0.1.1-rc.2`；稳定通道会发现 npm `latest`，但只有通过完整候选预检和观察期才会晋升。2026-09-22 对 `0.1.5-rc.2` 的独立安装验证发现上游 Web 插件树缺少运行时依赖，本桌面版会拒绝激活该候选并继续运行稳定版；这不是已验证可用的升级。预览通道可以发现 alpha 版本，但默认不会自动安装。
 
 ## 本地运行
 
@@ -24,9 +24,9 @@ npm run dist:win
 
 1. 桌面进程启动官方 DSH Web profile，并只监听 `127.0.0.1` 的随机端口。
 2. 新版本先安装到独立候选目录，不覆盖当前版本。
-3. 候选版本依次通过 CLI 版本检查、托管 profile 配置合成检查、HTTP 存活检查。
+3. 下载后的 CLI 与 Web HTTP 先在临时空数据槽检查；停止旧运行时后复制活动数据槽，候选在副本上再次通过配置合成与 HTTP 存活检查。预检失败不会切换当前版本。
 4. 候选版本完成观察期后才成为 `lastKnownGood`。
-5. 运行时异常时先自动关闭省 token 配置重试；若候选仍失败，则回滚并启动上一稳定版本。
+5. 运行时异常时先自动关闭省 token 配置重试；若候选仍失败，则同时切回上一稳定版本及其数据槽。失败候选槽保留以便人工找回期间产生的会话，自动回滚不会合并这些数据。
 6. 稳定运行时连续崩溃时，桌面监督器指数退避重启；非捆绑运行时无法恢复时，回落到捆绑版本。
 7. 正式安装包会运行一个轻量外部看门狗；桌面主进程非正常退出时，看门狗重新拉起应用。
 
@@ -35,11 +35,11 @@ npm run dist:win
 - 全局 DSH 数据：`%USERPROFILE%\.dsh`，桌面版不读取或改写。
 - 桌面状态：Electron `userData/recovery/state.json`。
 - 独立运行时：Electron `userData/runtimes/<version>`。
-- 托管配置与会话：Electron `userData/harness-home`（不读取或改写全局 `~/.dsh`）。
+- 托管配置与会话：默认稳定槽为 Electron `userData/harness-home`；升级后的隔离槽为 `userData/profile-homes/slot-*`（不读取或改写全局 `~/.dsh`）。
 - 升级安装器：随应用锁定发布的 npm，不依赖系统 PATH 或全局 Node.js。
 - 日志：Electron `userData/logs/desktop.log` 与 `harness.log`。
 
-桌面管理器不会读取或显示 `.credentials.yaml` 的内容，也不会把密钥复制进升级目录。
+桌面管理器不会解析或显示 `.credentials.yaml` 的内容；升级时会把托管数据槽整体复制到本机候选槽，因此其中的凭据文件也会随之复制。临时下载目录不承载用户凭据，失败候选槽默认保留，请按本机敏感数据对待。
 
 ## 省 token 模式
 
@@ -51,4 +51,4 @@ npm run dist:win
 - Codex 的 workspace sandbox、审批策略与 `AGENTS.md` 思路被映射为“最小 IPC + 项目规则 + 明确权限边界”。
 - Claude Code 的可恢复会话、权限模式、后台会话与可组合工具思路被映射为“任务运行时独立于桌面壳”。
 
-详细设计与取舍见 [docs/architecture.md](docs/architecture.md) 和 [docs/adr](docs/adr)。
+官方 DeepSeek Harness 现在也有自己的 [Desktop 设计](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.md)。本项目定位为独立的恢复优先监督壳，而非其官方桌面版；运行时独立升级的兼容性风险高于官方的壳与运行时绑定更新。详细设计、热门项目对照与取舍见 [docs/architecture.md](docs/architecture.md)、[docs/popular-projects.md](docs/popular-projects.md) 和 [docs/adr](docs/adr)。
