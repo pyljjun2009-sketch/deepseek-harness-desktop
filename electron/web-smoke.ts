@@ -25,13 +25,14 @@ export async function smokeWebRuntime(
   homePath: string,
   patchArgs: string[],
   log: LogFunction,
-  timeoutMs = 45_000
+  timeoutMs = 45_000,
+  environment: NodeJS.ProcessEnv = {}
 ): Promise<void> {
   const child = spawn(
     executable,
     [binPath, "web", ...patchArgs, "--host", "127.0.0.1", "--port", "0", "--no-open"],
     {
-      env: { ...process.env, DSH_HOME: homePath, DSH_DESKTOP: "1", ELECTRON_RUN_AS_NODE: "1" },
+      env: { ...process.env, ...environment, DSH_HOME: homePath, DSH_DESKTOP: "1", ELECTRON_RUN_AS_NODE: "1" },
       windowsHide: true,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"]

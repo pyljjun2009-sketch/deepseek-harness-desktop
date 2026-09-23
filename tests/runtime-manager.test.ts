@@ -52,6 +52,31 @@ describe("runtime profile isolation", () => {
     expect(manager.getWebPatchArguments()).toEqual(["--patch", manager.desktopCompatPatchPath]);
   });
 
+  it("keeps the optional Sub2API tool off by default and writes a portable file URL overlay", async () => {
+    const { manager } = await fixture();
+    expect(manager.getSub2ApiSettings().enabled).toBe(false);
+    expect(manager.getWebPatchArguments()).not.toContain(manager.sub2apiPatchPath);
+    const patch = await readFile(manager.sub2apiPatchPath, "utf8");
+    expect(patch).toContain("desktop-sub2api-personal");
+    expect(patch).toMatch(/name: "file:\/\/\//);
+    expect(patch).toContain("dist/index.js");
+  });
+
+  it("disables Sub2API before changing the token-saving layer after a crash", async () => {
+    const { manager } = await fixture();
+    manager.getState().sub2api = {
+      enabled: true,
+      allowedProfiles: ["personal"],
+      powerShellPath: "C:\\PowerShell\\pwsh.exe"
+    };
+    expect(manager.getWebPatchArguments()).toContain(manager.sub2apiPatchPath);
+    expect(await manager.recordFailure()).toBe("retry");
+    expect(manager.getSub2ApiSettings().enabled).toBe(false);
+    expect(manager.getState().tokenSavingEnabled).toBe(true);
+    expect(await manager.recordFailure()).toBe("retry");
+    expect(manager.getState().tokenSavingEnabled).toBe(false);
+  });
+
   it("activates a cloned home and rolls runtime and home back together", async () => {
     const { manager, managed } = await fixture();
     await writeFile(path.join(manager.harnessHome, "session.txt"), "stable session", "utf8");
@@ -88,6 +113,7 @@ describe("runtime profile isolation", () => {
     await reloaded.initialize();
     expect(reloaded.getState().schemaVersion).toBe(2);
     expect(reloaded.getState().activeHomeId).toBe("default");
+    expect(reloaded.getSub2ApiSettings().enabled).toBe(false);
     expect(manager.getState().schemaVersion).toBe(2);
   });
 

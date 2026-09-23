@@ -2,8 +2,9 @@ const { spawn } = require("node:child_process");
 const { mkdtemp, mkdir, readFile, rm, writeFile } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
-async function waitForUrl(child, timeoutMs, stage) {
+async function waitForUrl(child, timeoutMs, stage, expectedMarker) {
   return await new Promise((resolve, reject) => {
     let combined = "";
     const buffers = { stdout: "", stderr: "" };
@@ -17,6 +18,10 @@ async function waitForUrl(child, timeoutMs, stage) {
         const match = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+(?:\/\?\S+)?)(?=\s|$)/i.exec(line);
         if (match) {
           clearTimeout(timer);
+          if (expectedMarker && !combined.includes(expectedMarker)) {
+            reject(new Error(`${stage} became available without registering ${expectedMarker}: ${combined}`));
+            return;
+          }
           resolve(match[1]);
           return;
         }
@@ -93,6 +98,32 @@ async function main() {
         try { assertBrowsePickerConfig(config); resolve(); } catch (error) { reject(error); }
       });
     });
+    const pluginHome = path.join(testRoot, "sub2api-plugin-smoke");
+    await mkdir(pluginHome, { recursive: true });
+    child = spawn(process.execPath, [manager.getActive().binPath, "web", ...manager.getWebPatchArguments(true), "--host", "127.0.0.1", "--port", "0", "--no-open"], {
+      env: { ...manager.getHarnessEnvironment(pluginHome), ELECTRON_RUN_AS_NODE: "1" },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const pluginUrl = await waitForUrl(child, 45_000, "Sub2API plugin", '[sub2api-personal] registered "sub2api_personal" — listed=true');
+    const pluginResponse = await fetch(pluginUrl, { redirect: "manual" });
+    if (pluginResponse.status < 200 || pluginResponse.status >= 400) {
+      throw new Error(`Packaged Sub2API plugin returned HTTP ${pluginResponse.status}`);
+    }
+    const { executeSub2Api } = await import(pathToFileURL(path.join(appRoot, "vendor", "dsh-sub2api-personal", "dist", "core.js")).href);
+    const previousAllowlist = process.env.SUB2API_PERSONAL_ALLOWED_PROFILES;
+    try {
+      process.env.SUB2API_PERSONAL_ALLOWED_PROFILES = "personal";
+      const blocked = await executeSub2Api({ action: "test_profile", profileName: "blocked" });
+      if (blocked.ok || blocked.exitCode !== 2 || !blocked.error.includes("not allowed")) {
+        throw new Error("Packaged Sub2API tool did not enforce the account allowlist");
+      }
+    } finally {
+      if (previousAllowlist === undefined) delete process.env.SUB2API_PERSONAL_ALLOWED_PROFILES;
+      else process.env.SUB2API_PERSONAL_ALLOWED_PROFILES = previousAllowlist;
+    }
+    await terminate(child);
+    child = undefined;
     await writeFile(path.join(manager.harnessHome, "smoke-session.txt"), "stable");
     const brokenBin = path.join(testRoot, "runtimes", "0.2.0", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
     await mkdir(path.dirname(brokenBin), { recursive: true });
@@ -155,7 +186,7 @@ console.error("PACKAGED_BROKEN_WEB"); process.exit(1);
     if (restoredResponse.status < 200 || restoredResponse.status >= 400) {
       throw new Error(`Restored stable runtime returned HTTP ${restoredResponse.status}`);
     }
-    process.stdout.write(JSON.stringify({ version: candidate.version, origin: new URL(url).origin, bareStatus: bareResponse.status, tokenStatus: response.status, browsePicker: true, brokenCandidateRejected: true, profileIsolation: true, rollback: true, restoredStatus: restoredResponse.status }) + "\n");
+    process.stdout.write(JSON.stringify({ version: candidate.version, origin: new URL(url).origin, bareStatus: bareResponse.status, tokenStatus: response.status, browsePicker: true, sub2apiPluginLoaded: true, sub2apiAllowlist: true, brokenCandidateRejected: true, profileIsolation: true, rollback: true, restoredStatus: restoredResponse.status }) + "\n");
   } finally {
     if (child) await terminate(child);
     await rm(testRoot, { recursive: true, force: true });

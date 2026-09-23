@@ -23,6 +23,24 @@ export interface AvailableUpdate {
   publishedAt?: string;
 }
 
+export interface Sub2ApiSettings {
+  enabled: boolean;
+  allowedProfiles: string[];
+  powerShellPath: string;
+}
+
+export interface Sub2ApiSnapshot extends Sub2ApiSettings {
+  clientPath: string;
+  clientAvailable: boolean;
+  powerShellAvailable: boolean;
+}
+
+export interface Sub2ApiProfileResult {
+  ok: boolean;
+  profiles: string[];
+  message: string;
+}
+
 export interface HarnessSnapshot {
   status: HarnessStatus;
   message: string;
@@ -40,6 +58,7 @@ export interface HarnessSnapshot {
   channel: RuntimeChannel;
   autoStart: boolean;
   tokenSavingEnabled: boolean;
+  sub2api: Sub2ApiSnapshot;
   latestUpdate?: AvailableUpdate;
   logs: string[];
 }
@@ -60,6 +79,8 @@ export interface DesktopApi {
   setChannel(channel: RuntimeChannel): Promise<CommandResult>;
   setAutoStart(enabled: boolean): Promise<CommandResult>;
   setTokenSaving(enabled: boolean): Promise<CommandResult>;
+  listSub2ApiProfiles(powerShellPath: string): Promise<Sub2ApiProfileResult>;
+  setSub2Api(settings: Sub2ApiSettings): Promise<CommandResult>;
   openLogs(): Promise<CommandResult>;
   subscribeSnapshot(listener: (snapshot: HarnessSnapshot) => void): void;
 }

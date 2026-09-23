@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopApi, HarnessSnapshot, RuntimeChannel } from "../shared/contracts";
+import type { DesktopApi, HarnessSnapshot, RuntimeChannel, Sub2ApiSettings } from "../shared/contracts";
 
 const api: DesktopApi = {
   getSnapshot: () => ipcRenderer.invoke("desktop:get-snapshot"),
@@ -12,6 +12,8 @@ const api: DesktopApi = {
   setChannel: (channel: RuntimeChannel) => ipcRenderer.invoke("desktop:set-channel", channel),
   setAutoStart: (enabled: boolean) => ipcRenderer.invoke("desktop:set-auto-start", enabled),
   setTokenSaving: (enabled: boolean) => ipcRenderer.invoke("desktop:set-token-saving", enabled),
+  listSub2ApiProfiles: (powerShellPath: string) => ipcRenderer.invoke("desktop:list-sub2api-profiles", powerShellPath),
+  setSub2Api: (settings: Sub2ApiSettings) => ipcRenderer.invoke("desktop:set-sub2api", settings),
   openLogs: () => ipcRenderer.invoke("desktop:open-logs"),
   subscribeSnapshot: (listener: (snapshot: HarnessSnapshot) => void) => {
     ipcRenderer.on("desktop:snapshot", (_event, snapshot: HarnessSnapshot) => listener(snapshot));
