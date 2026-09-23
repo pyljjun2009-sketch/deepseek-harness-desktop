@@ -13,7 +13,7 @@ import {
   shell,
   type IpcMainInvokeEvent
 } from "electron";
-import type { CommandResult, RuntimeChannel, Sub2ApiSettings } from "../shared/contracts";
+import type { CommandResult, RuntimeChannel } from "../shared/contracts";
 import { FileRingLogger } from "./logger";
 import { RuntimeManager } from "./runtime-manager";
 import { HarnessSupervisor } from "./supervisor";
@@ -256,30 +256,6 @@ function registerIpcHandlers(): void {
     await runtime.setTokenSaving(enabled);
     await supervisor.restart();
     return result(true, enabled ? "已启用省 token 模式，运行时正在重启" : "已恢复原生模式，运行时正在重启");
-  });
-
-  ipcMain.handle("desktop:list-sub2api-profiles", async (event, powerShellPath: unknown) => {
-    assertTrustedSender(event);
-    if (typeof powerShellPath !== "string" || powerShellPath.length > 1024) {
-      return { ok: false, profiles: [], message: "PowerShell 路径无效" };
-    }
-    return runtime.listSub2ApiProfiles(powerShellPath);
-  });
-
-  ipcMain.handle("desktop:set-sub2api", async (event, value: unknown) => {
-    assertTrustedSender(event);
-    if (!value || typeof value !== "object") return result(false, "Sub2API 设置无效");
-    const settings = value as Partial<Sub2ApiSettings>;
-    if (typeof settings.enabled !== "boolean" ||
-        typeof settings.powerShellPath !== "string" || settings.powerShellPath.length > 1024 ||
-        !Array.isArray(settings.allowedProfiles)) return result(false, "Sub2API 设置无效");
-    try {
-      await runtime.setSub2Api(settings as Sub2ApiSettings);
-      if (supervisor.snapshot().status !== "stopped") await supervisor.restart();
-      return result(true, settings.enabled ? "Sub2API 工具已启用" : "Sub2API 工具已停用");
-    } catch (error) {
-      return result(false, error instanceof Error ? error.message : "Sub2API 设置失败");
-    }
   });
 
   ipcMain.handle("desktop:open-logs", async (event) => {

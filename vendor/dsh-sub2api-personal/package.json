@@ -1,8 +1,0 @@
-{
-  "name": "dsh-sub2api-personal",
-  "version": "0.4.2",
-  "private": true,
-  "type": "module",
-  "main": "./dist/index.js",
-  "license": "MIT"
-}

@@ -46,14 +46,6 @@ const EMPTY_SNAPSHOT: HarnessSnapshot = {
   channel: "stable",
   autoStart: false,
   tokenSavingEnabled: true,
-  sub2api: {
-    enabled: false,
-    allowedProfiles: [],
-    powerShellPath: "",
-    clientPath: "",
-    clientAvailable: false,
-    powerShellAvailable: false
-  },
   logs: []
 };
 
@@ -86,7 +78,7 @@ function formatDate(value?: string): string {
   }).format(new Date(value));
 }
 
-function Toggle({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
   return (
     <button
       type="button"
@@ -95,7 +87,6 @@ function Toggle({ checked, onChange, label, disabled = false }: { checked: boole
       role="switch"
       aria-checked={checked}
       aria-label={label}
-      disabled={disabled}
     >
       <span />
     </button>
@@ -108,15 +99,10 @@ function App() {
   const [busy, setBusy] = useState<string>();
   const [toast, setToast] = useState<{ ok: boolean; message: string }>();
   const [tick, setTick] = useState(0);
-  const [sub2apiPowerShellPath, setSub2ApiPowerShellPath] = useState("");
-  const [sub2apiProfiles, setSub2ApiProfiles] = useState<string[]>([]);
-  const [sub2apiAllowedProfiles, setSub2ApiAllowedProfiles] = useState<string[]>([]);
 
   useEffect(() => {
     void window.harnessDesktop.getSnapshot().then((initial) => {
       setSnapshot(initial);
-      setSub2ApiPowerShellPath(initial.sub2api.powerShellPath);
-      setSub2ApiAllowedProfiles(initial.sub2api.allowedProfiles);
     });
     window.harnessDesktop.subscribeSnapshot(setSnapshot);
     const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
@@ -146,30 +132,6 @@ function App() {
       setBusy(undefined);
     }
   };
-
-  const discoverSub2ApiProfiles = async () => {
-    setBusy("sub2api-discover");
-    try {
-      const response = await window.harnessDesktop.listSub2ApiProfiles(sub2apiPowerShellPath);
-      setToast(response);
-      if (response.ok) {
-        setSub2ApiProfiles(response.profiles);
-        setSub2ApiAllowedProfiles((current) => current.filter((name) => response.profiles.includes(name)));
-      }
-    } catch (error) {
-      setToast({ ok: false, message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setBusy(undefined);
-    }
-  };
-
-  const saveSub2Api = (enabled: boolean) => void run("sub2api-save", () =>
-    window.harnessDesktop.setSub2Api({
-      enabled,
-      allowedProfiles: sub2apiAllowedProfiles,
-      powerShellPath: sub2apiPowerShellPath.trim()
-    })
-  );
 
   const checkUpdates = async () => {
     setBusy("check-update");
@@ -468,70 +430,6 @@ function App() {
                 </div>
               </article>
 
-              <article className="panel wide-panel integration-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-kicker">按需工具</p>
-                    <h3>Sub2API Personal</h3>
-                  </div>
-                  <ShieldCheck size={21} className="accent-icon" />
-                </div>
-                <p className="muted">启用后，DSH Agent 可以在需要时调用所选账号的 Sub2API 工具。工作台默认聊天模型不会改变。调用模型可能消耗所选账号额度。</p>
-                <div className="setting-row">
-                  <div><strong>本地客户端</strong><small>{snapshot.sub2api.clientAvailable ? "已找到 sub2api.ps1" : "未找到 sub2api.ps1，请先安装本地客户端"}</small></div>
-                  <code className="path-code">{snapshot.sub2api.clientPath || "未配置"}</code>
-                </div>
-                <div className="setting-row">
-                  <div><strong>PowerShell 7</strong><small>填写 pwsh.exe 的绝对路径；配置会随桌面版保存</small></div>
-                  <input
-                    className="path-input"
-                    type="text"
-                    aria-label="PowerShell 7 路径"
-                    value={sub2apiPowerShellPath}
-                    onChange={(event) => setSub2ApiPowerShellPath(event.target.value)}
-                    placeholder="C:\\Program Files\\PowerShell\\7\\pwsh.exe"
-                    spellCheck={false}
-                  />
-                </div>
-                <div className="setting-row">
-                  <div><strong>允许的账号</strong><small>只向 Agent 开放勾选的账号；不会读取或显示密钥</small></div>
-                  <button type="button" className="button secondary" onClick={() => void discoverSub2ApiProfiles()} disabled={Boolean(busy)}>
-                    <RefreshCw size={15} /> 读取账号
-                  </button>
-                </div>
-                {sub2apiProfiles.length > 0 && (
-                  <div className="profile-options" aria-label="Sub2API 可用账号">
-                    {sub2apiProfiles.map((name) => (
-                      <label className="profile-option" key={name}>
-                        <input
-                          type="checkbox"
-                          checked={sub2apiAllowedProfiles.includes(name)}
-                          onChange={(event) => setSub2ApiAllowedProfiles((current) =>
-                            event.target.checked ? [...current, name] : current.filter((item) => item !== name)
-                          )}
-                        />
-                        <span>{name}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-                <div className="setting-row">
-                  <div><strong>启用 Agent 工具</strong><small>{snapshot.sub2api.enabled ? "已启用；异常时会自动停用插件并重启" : "默认关闭，启用前需选择至少一个账号"}</small></div>
-                  <Toggle
-                    checked={snapshot.sub2api.enabled}
-                    label="切换 Sub2API 工具"
-                    onChange={() => saveSub2Api(!snapshot.sub2api.enabled)}
-                    disabled={Boolean(busy)}
-                  />
-                </div>
-                {snapshot.sub2api.enabled && (
-                  <div className="panel-actions">
-                    <button type="button" className="button secondary" onClick={() => saveSub2Api(true)} disabled={Boolean(busy)}>
-                      保存账号设置
-                    </button>
-                  </div>
-                )}
-              </article>
             </section>
           )}
 

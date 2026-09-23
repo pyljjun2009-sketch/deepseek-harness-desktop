@@ -1,4 +1,4 @@
-import type { RuntimeChannel, RuntimeRef, Sub2ApiSettings } from "../shared/contracts";
+import type { RuntimeChannel, RuntimeRef } from "../shared/contracts";
 
 export interface RecoveryState {
   schemaVersion: 2;
@@ -12,7 +12,6 @@ export interface RecoveryState {
   crashTimestamps: string[];
   rollbackCount: number;
   tokenSavingEnabled: boolean;
-  sub2api?: Sub2ApiSettings;
   updatedAt: string;
 }
 
@@ -57,7 +56,6 @@ export function createDefaultState(bundled: RuntimeRef): RecoveryState {
     crashTimestamps: [],
     rollbackCount: 0,
     tokenSavingEnabled: true,
-    sub2api: { enabled: false, allowedProfiles: [], powerShellPath: "" },
     updatedAt: new Date().toISOString()
   };
 }

@@ -1,11 +1,10 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import type { AvailableUpdate, RuntimeChannel, RuntimeRef, Sub2ApiProfileResult, Sub2ApiSettings, Sub2ApiSnapshot } from "../shared/contracts";
+import type { AvailableUpdate, RuntimeChannel, RuntimeRef } from "../shared/contracts";
 import { AtomicJsonStore } from "./atomic-store";
 import {
   createDefaultState,
@@ -44,18 +43,6 @@ function isSafeHomeId(value: unknown): value is string {
   );
 }
 
-const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const EMPTY_SUB2API: Sub2ApiSettings = { enabled: false, allowedProfiles: [], powerShellPath: "" };
-
-function isSub2ApiSettings(value: unknown): value is Sub2ApiSettings {
-  if (!value || typeof value !== "object") return false;
-  const settings = value as Partial<Sub2ApiSettings>;
-  return typeof settings.enabled === "boolean" &&
-    typeof settings.powerShellPath === "string" && settings.powerShellPath.length <= 4096 &&
-    Array.isArray(settings.allowedProfiles) &&
-    settings.allowedProfiles.every((name) => typeof name === "string" && PROFILE_NAME.test(name));
-}
-
 function isRecoveryState(value: unknown): value is RecoveryState | LegacyRecoveryState {
   if (!value || typeof value !== "object") return false;
   const state = value as Record<string, unknown>;
@@ -72,7 +59,6 @@ function isRecoveryState(value: unknown): value is RecoveryState | LegacyRecover
     Array.isArray(state.crashTimestamps) &&
     typeof state.rollbackCount === "number" &&
     (state.tokenSavingEnabled === undefined || typeof state.tokenSavingEnabled === "boolean") &&
-    (state.sub2api === undefined || isSub2ApiSettings(state.sub2api)) &&
     typeof state.updatedAt === "string"
   );
 }
@@ -115,8 +101,6 @@ export class RuntimeManager {
   readonly harnessHome: string;
   readonly desktopCompatPatchPath: string;
   readonly optimizationPatchPath: string;
-  readonly sub2apiPatchPath: string;
-  readonly sub2apiModulePath: string;
   private readonly store: AtomicJsonStore<RecoveryState | LegacyRecoveryState>;
   private state?: RecoveryState;
 
@@ -135,10 +119,6 @@ export class RuntimeManager {
     const configRoot = existsSync(packagedConfig) ? packagedConfig : sourceConfig;
     this.desktopCompatPatchPath = path.join(configRoot, "desktop-compat.patch.yml");
     this.optimizationPatchPath = path.join(configRoot, "token-saving.patch.yml");
-    this.sub2apiPatchPath = path.join(dataRoot, "integrations", "sub2api.patch.yml");
-    const packagedSub2Api = path.resolve(__dirname, "..", "..", "vendor", "dsh-sub2api-personal", "dist", "index.js");
-    const sourceSub2Api = path.resolve(__dirname, "..", "vendor", "dsh-sub2api-personal", "dist", "index.js");
-    this.sub2apiModulePath = existsSync(packagedSub2Api) ? packagedSub2Api : sourceSub2Api;
     this.store = new AtomicJsonStore(
       path.join(dataRoot, "recovery", "state.json"),
       () => createDefaultState(this.bundled),
@@ -148,25 +128,17 @@ export class RuntimeManager {
 
   async initialize(): Promise<void> {
     await mkdir(this.harnessHome, { recursive: true });
-    await this.writeSub2ApiPatch();
     const stored = await this.store.read();
-    this.state = migrateRecoveryState(stored);
-    if (stored.schemaVersion === 1 || this.state.tokenSavingEnabled === undefined || this.state.sub2api === undefined) {
+    const hadLegacySub2Api = Object.prototype.hasOwnProperty.call(stored, "sub2api");
+    const migrated = migrateRecoveryState(stored) as RecoveryState & { sub2api?: unknown };
+    const { sub2api: _legacySub2Api, ...cleanState } = migrated;
+    this.state = cleanState;
+    if (stored.schemaVersion === 1 || this.state.tokenSavingEnabled === undefined || hadLegacySub2Api) {
       this.state = {
         ...this.state,
-        tokenSavingEnabled: this.state.tokenSavingEnabled ?? true,
-        sub2api: this.state.sub2api ?? { ...EMPTY_SUB2API }
+        tokenSavingEnabled: this.state.tokenSavingEnabled ?? true
       };
       await this.persist();
-    }
-    const sub2api = this.getSub2ApiSettings();
-    if (sub2api.enabled &&
-        (!existsSync(this.sub2apiModulePath) ||
-          !existsSync(this.getSub2ApiClientPath()) ||
-          !existsSync(sub2api.powerShellPath))) {
-      this.state = { ...this.state, sub2api: { ...sub2api, enabled: false } };
-      await this.persist();
-      this.log("recovery", "Sub2API 运行依赖缺失，已停用可选插件");
     }
     const bundledPointerChanged =
       this.state.active.source === "bundled" &&
@@ -178,8 +150,7 @@ export class RuntimeManager {
       this.state = {
         ...createDefaultState(this.bundled),
         channel: this.state.channel,
-        tokenSavingEnabled: this.state.tokenSavingEnabled,
-        sub2api: { ...EMPTY_SUB2API }
+        tokenSavingEnabled: this.state.tokenSavingEnabled
       };
       await this.persist();
       return;
@@ -212,141 +183,14 @@ export class RuntimeManager {
       DSH_HOME: homePath,
       DSH_DESKTOP: "1"
     };
-    const settings = this.getSub2ApiSettings();
-    if (settings.enabled) {
-      env.SUB2API_PERSONAL_ALLOWED_PROFILES = settings.allowedProfiles.join(",");
-      env.SUB2API_PERSONAL_POWERSHELL_PATH = settings.powerShellPath;
-      env.SUB2API_PERSONAL_CLIENT_PATH = this.getSub2ApiClientPath();
-    }
     return env;
   }
 
-  getWebPatchArguments(includeSub2Api = this.getSub2ApiSettings().enabled): string[] {
+  getWebPatchArguments(): string[] {
     if (!existsSync(this.desktopCompatPatchPath)) throw new Error("桌面兼容配置文件缺失");
     const args = ["--patch", this.desktopCompatPatchPath];
     if (this.getState().tokenSavingEnabled) args.push("--patch", this.optimizationPatchPath);
-    if (includeSub2Api) {
-      if (!existsSync(this.sub2apiModulePath) || !existsSync(this.sub2apiPatchPath)) {
-        throw new Error("Sub2API 插件文件缺失");
-      }
-      args.push("--patch", this.sub2apiPatchPath);
-    }
     return args;
-  }
-
-  getSub2ApiSettings(): Sub2ApiSettings {
-    return this.getState().sub2api ?? { ...EMPTY_SUB2API };
-  }
-
-  getSub2ApiSnapshot(): Sub2ApiSnapshot {
-    const settings = this.getSub2ApiSettings();
-    const powerShellPath = settings.powerShellPath || this.findPowerShellPath();
-    const clientPath = this.getSub2ApiClientPath();
-    return {
-      ...settings,
-      powerShellPath,
-      clientPath,
-      clientAvailable: existsSync(clientPath),
-      powerShellAvailable: Boolean(powerShellPath && existsSync(powerShellPath))
-    };
-  }
-
-  async listSub2ApiProfiles(powerShellPath: string): Promise<Sub2ApiProfileResult> {
-    const executable = powerShellPath.trim() || this.findPowerShellPath();
-    const clientPath = this.getSub2ApiClientPath();
-    if (!this.isValidPowerShellPath(executable)) {
-      return { ok: false, profiles: [], message: "请选择存在的 PowerShell 7 pwsh.exe 文件" };
-    }
-    if (!path.isAbsolute(clientPath) || !existsSync(clientPath)) {
-      return { ok: false, profiles: [], message: "未找到 Sub2API 本地客户端 sub2api.ps1" };
-    }
-    return await new Promise((resolve) => {
-      const child = spawn(executable, [
-        "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned",
-        "-File", clientPath, "list-profiles"
-      ], { windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-      let stdout = "";
-      let settled = false;
-      const finish = (result: Sub2ApiProfileResult): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(result);
-      };
-      const timer = setTimeout(() => {
-        child.kill();
-        finish({ ok: false, profiles: [], message: "读取本地账号超时" });
-      }, 15_000);
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-        if (stdout.length > 64_000) {
-          child.kill();
-          finish({ ok: false, profiles: [], message: "本地账号列表过大" });
-        }
-      });
-      child.stderr.on("data", () => {});
-      child.once("error", () => finish({ ok: false, profiles: [], message: "无法启动 PowerShell 7" }));
-      child.once("close", (code) => {
-        if (code !== 0) {
-          finish({ ok: false, profiles: [], message: "本地客户端无法读取账号，请检查其配置" });
-          return;
-        }
-        try {
-          const parsed: unknown = JSON.parse(stdout);
-          if (!Array.isArray(parsed)) throw new Error("invalid list");
-          const names = parsed.map((entry): string => {
-            const name = entry && typeof entry === "object" ? (entry as { name?: unknown }).name : undefined;
-            if (typeof name !== "string" || !PROFILE_NAME.test(name)) throw new Error("invalid name");
-            return name;
-          });
-          if (new Set(names).size !== names.length) throw new Error("duplicate name");
-          finish({ ok: true, profiles: names, message: `找到 ${names.length} 个本地账号` });
-        } catch {
-          finish({ ok: false, profiles: [], message: "本地客户端返回的账号列表无效" });
-        }
-      });
-    });
-  }
-
-  async setSub2Api(settings: Sub2ApiSettings): Promise<void> {
-    if (!isSub2ApiSettings(settings) || settings.allowedProfiles.length > 20 ||
-        new Set(settings.allowedProfiles).size !== settings.allowedProfiles.length) {
-      throw new Error("Sub2API 账号设置无效");
-    }
-    const normalized: Sub2ApiSettings = {
-      enabled: settings.enabled,
-      allowedProfiles: [...settings.allowedProfiles],
-      powerShellPath: settings.powerShellPath.trim() || this.findPowerShellPath()
-    };
-    if (normalized.enabled) {
-      if (normalized.allowedProfiles.length === 0) throw new Error("请先选择允许调用的账号");
-      const profiles = await this.listSub2ApiProfiles(normalized.powerShellPath);
-      if (!profiles.ok) throw new Error(profiles.message);
-      if (normalized.allowedProfiles.some((name) => !profiles.profiles.includes(name))) {
-        throw new Error("所选账号不在本地客户端配置中");
-      }
-      if (!existsSync(this.sub2apiModulePath)) throw new Error("Sub2API 插件文件缺失");
-      const smokeHome = await mkdtemp(path.join(os.tmpdir(), "dsh-sub2api-preflight-"));
-      try {
-        await smokeWebRuntime(
-          process.execPath,
-          this.getActive().binPath,
-          smokeHome,
-          this.getWebPatchArguments(true),
-          this.log,
-          45_000,
-          {
-            SUB2API_PERSONAL_ALLOWED_PROFILES: normalized.allowedProfiles.join(","),
-            SUB2API_PERSONAL_POWERSHELL_PATH: normalized.powerShellPath,
-            SUB2API_PERSONAL_CLIENT_PATH: this.getSub2ApiClientPath()
-          }
-        );
-      } finally {
-        await rm(smokeHome, { recursive: true, force: true });
-      }
-    }
-    this.state = { ...this.getState(), sub2api: normalized, updatedAt: new Date().toISOString() };
-    await this.persist();
   }
 
   async setTokenSaving(enabled: boolean): Promise<void> {
@@ -526,17 +370,6 @@ export class RuntimeManager {
   }
 
   async recordFailure(): Promise<RecoveryAction> {
-    const sub2api = this.getSub2ApiSettings();
-    if (sub2api.enabled) {
-      this.state = {
-        ...this.getState(),
-        sub2api: { ...sub2api, enabled: false },
-        updatedAt: new Date().toISOString()
-      };
-      await this.persist();
-      this.log("recovery", "运行时异常：先停用 Sub2API 可选插件并重试");
-      return "retry";
-    }
     if (this.getState().tokenSavingEnabled) {
       this.state = {
         ...this.getState(),
@@ -557,33 +390,6 @@ export class RuntimeManager {
   private resolveHomePath(homeId: string): string {
     if (!isSafeHomeId(homeId)) throw new Error("数据槽标识无效");
     return homeId === "default" ? this.harnessHome : path.join(this.dataRoot, "profile-homes", homeId);
-  }
-
-  private getSub2ApiClientPath(): string {
-    const configured = process.env.SUB2API_PERSONAL_CLIENT_PATH;
-    if (configured) return configured;
-    return path.join(process.env.USERPROFILE || os.homedir(), "plugins", "sub2api-personal", "scripts", "sub2api.ps1");
-  }
-
-  private findPowerShellPath(): string {
-    const configured = process.env.SUB2API_PERSONAL_POWERSHELL_PATH;
-    const candidates = [
-      configured,
-      process.env.ProgramFiles && path.join(process.env.ProgramFiles, "PowerShell", "7", "pwsh.exe"),
-      ...((process.env.PATH ?? "").split(path.delimiter).map((directory) => directory && path.join(directory, "pwsh.exe")))
-    ];
-    return candidates.find((candidate): candidate is string => Boolean(candidate && this.isValidPowerShellPath(candidate))) ?? "";
-  }
-
-  private isValidPowerShellPath(candidate: string): boolean {
-    return path.isAbsolute(candidate) && path.basename(candidate).toLowerCase() === "pwsh.exe" && existsSync(candidate);
-  }
-
-  private async writeSub2ApiPatch(): Promise<void> {
-    await mkdir(path.dirname(this.sub2apiPatchPath), { recursive: true });
-    const moduleUrl = pathToFileURL(this.sub2apiModulePath).href;
-    const contents = `- insert:\n    - id: desktop-sub2api-personal\n      name: ${JSON.stringify(moduleUrl)}\n`;
-    await writeFile(this.sub2apiPatchPath, contents, "utf8");
   }
 
   private async smokeTest(binPath: string, homePath: string): Promise<void> {

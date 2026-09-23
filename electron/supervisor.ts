@@ -61,7 +61,6 @@ export class HarnessSupervisor extends EventEmitter {
       channel: state.channel,
       autoStart: this.autoStart,
       tokenSavingEnabled: state.tokenSavingEnabled,
-      sub2api: this.runtime.getSub2ApiSnapshot(),
       latestUpdate: this.latestUpdate,
       logs: this.logger.recent()
     };

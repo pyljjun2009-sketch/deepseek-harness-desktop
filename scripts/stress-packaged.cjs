@@ -26,7 +26,7 @@ async function terminate(child) {
   });
 }
 
-async function startWeb(manager, withPlugin) {
+async function startWeb(manager) {
   const args = [manager.getActive().binPath, "web", ...manager.getWebPatchArguments(),
     "--host", "127.0.0.1", "--port", "0", "--no-open"];
   const child = spawn(process.execPath, args, {
@@ -49,11 +49,7 @@ async function startWeb(manager, withPlugin) {
           const match = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+(?:\/\?\S+)?)(?=\s|$)/i.exec(line);
           if (match) {
             clearTimeout(timer);
-            if (withPlugin && !output.includes('[sub2api-personal] registered "sub2api_personal" — listed=true')) {
-              reject(new Error(`Sub2API tool was not registered: ${output}`));
-            } else {
-              resolve(match[1]);
-            }
+          resolve(match[1]);
             return;
           }
         }
@@ -119,33 +115,31 @@ async function main() {
       const roundRoot = path.join(stressRoot, `round-${round}`);
       const manager = new RuntimeManager(roundRoot, () => {});
       await manager.initialize();
-      manager.getState().sub2api = { enabled: true, allowedProfiles: ["stress"], powerShellPath: "" };
-      let running = await startWeb(manager, true);
+      let running = await startWeb(manager);
       child = running.child;
-      const pluginBurst = await probeBurst(running.origin, concurrency);
+      const initialBurst = await probeBurst(running.origin, concurrency);
       await terminate(child);
       child = undefined;
-      if (await manager.recordFailure() !== "retry" || manager.getSub2ApiSettings().enabled) {
-        throw new Error(`Round ${round}: plugin failure did not disable the optional tool`);
+      if (await manager.recordFailure() !== "retry" || manager.getState().tokenSavingEnabled) {
+        throw new Error(`Round ${round}: failure did not disable token-saving mode`);
       }
-      running = await startWeb(manager, false);
+      running = await startWeb(manager);
       child = running.child;
       const recoveryBurst = await probeBurst(running.origin, concurrency);
       await terminate(child);
       child = undefined;
       const reloaded = new RuntimeManager(roundRoot, () => {});
       await reloaded.initialize();
-      if (reloaded.getSub2ApiSettings().enabled || reloaded.getActive().source !== "bundled") {
+      if (reloaded.getState().tokenSavingEnabled || reloaded.getActive().source !== "bundled") {
         throw new Error(`Round ${round}: recovered state did not survive restart`);
       }
-      samples.push({ round, pluginMs: pluginBurst.elapsedMs, recoveredMs: recoveryBurst.elapsedMs });
-      process.stdout.write(`round ${round}/${rounds}: ${concurrency * 2} requests, plugin and recovery passed\n`);
+      samples.push({ round, initialMs: initialBurst.elapsedMs, recoveredMs: recoveryBurst.elapsedMs });
+      process.stdout.write(`round ${round}/${rounds}: ${concurrency * 2} requests, runtime and recovery passed\n`);
     }
     for (let round = 1; round <= supervisorRounds; round++) {
       const roundRoot = path.join(stressRoot, `supervisor-${round}`);
       const manager = new RuntimeManager(roundRoot, () => {});
       await manager.initialize();
-      manager.getState().sub2api = { enabled: true, allowedProfiles: ["stress"], powerShellPath: "" };
       const logger = new FileRingLogger(path.join(roundRoot, "logs", "supervisor.log"));
       await logger.initialize();
       const supervisor = new HarnessSupervisor(manager, logger, "stress");
@@ -155,8 +149,8 @@ async function main() {
         await terminate(supervisor.child);
         await waitForStatus(supervisor, "recovering", 10_000);
         await waitForStatus(supervisor, "online", 45_000);
-        if (manager.getSub2ApiSettings().enabled || supervisor.snapshot().status !== "online") {
-          throw new Error(`Supervisor round ${round}: optional plugin was not disabled after crash`);
+        if (manager.getState().tokenSavingEnabled || supervisor.snapshot().status !== "online") {
+          throw new Error(`Supervisor round ${round}: token-saving recovery failed after crash`);
         }
       } finally {
         await supervisor.stop();
@@ -164,7 +158,7 @@ async function main() {
       process.stdout.write(`supervisor ${round}/${supervisorRounds}: crash and automatic recovery passed\n`);
     }
     process.stdout.write(JSON.stringify({ rounds, concurrency, requests: rounds * concurrency * 2,
-      pluginRecoveryPasses: rounds, supervisorCrashRecoveryPasses: supervisorRounds, samples }) + "\n");
+      failureRecoveryPasses: rounds, supervisorCrashRecoveryPasses: supervisorRounds, samples }) + "\n");
   } finally {
     if (child) await terminate(child);
     await rm(stressRoot, { recursive: true, force: true });

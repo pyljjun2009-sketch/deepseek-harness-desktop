@@ -160,14 +160,6 @@ main { height: 100vh; min-width: 0; overflow: auto; }
 .setting-row strong { font-size: 12px; font-weight: 600; }
 .setting-row small { margin-top: 5px; color: #60716c; font-size: 10px; }
 .setting-row code { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: #a6b9b4; background: #0b1114; font-size: 11px; }
-.integration-panel { min-height: 0; margin-top: 14px; }
-.integration-panel > .muted { margin: -6px 0 20px; }
-.path-code { max-width: 55%; overflow-wrap: anywhere; text-align: right; }
-.path-input { width: min(55%, 520px); min-height: 38px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; outline: none; color: var(--text); background: #0b1114; font: 11px ui-monospace, Consolas, monospace; }
-.path-input:focus { border-color: var(--teal); }
-.profile-options { display: flex; flex-wrap: wrap; gap: 9px; margin: 2px 0 18px; }
-.profile-option { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text); background: #0b1114; font-size: 11px; cursor: pointer; }
-.profile-option input { accent-color: var(--teal); }
 .choice { min-width: 68px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 7px; color: #798a86; background: transparent; cursor: pointer; font-size: 11px; }
 .choice.selected { border-color: rgba(53,214,174,0.35); color: var(--teal); background: var(--teal-soft); }
 .toggle { width: 40px; height: 23px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 99px; background: #0d1417; cursor: pointer; transition: 180ms ease; }
@@ -233,6 +225,4 @@ main { height: 100vh; min-width: 0; overflow: auto; }
   .orbital { display: none; }
   .recovery-route { grid-template-columns: 1fr; }
   .recovery-connector { transform: rotate(90deg); justify-self: center; }
-  .integration-panel .setting-row { align-items: flex-start; flex-direction: column; justify-content: center; padding: 14px 0; }
-  .path-code, .path-input { width: 100%; max-width: 100%; text-align: left; }
 }
