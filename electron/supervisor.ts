@@ -19,6 +19,7 @@ export class HarnessSupervisor extends EventEmitter {
   private generation = 0;
   private healthTimer?: NodeJS.Timeout;
   private probationTimer?: NodeJS.Timeout;
+  private startupTimer?: NodeJS.Timeout;
   private healthFailures = 0;
   private latestUpdate?: AvailableUpdate;
   private autoStart = false;
@@ -178,7 +179,8 @@ export class HarnessSupervisor extends EventEmitter {
       if (generation === this.generation) void this.handleExit();
     });
 
-    setTimeout(() => {
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
       if (generation === this.generation && this.status === "starting") {
         this.logger.log("supervisor", "启动超时，终止候选进程");
         void this.terminateChild();
@@ -193,6 +195,8 @@ export class HarnessSupervisor extends EventEmitter {
     const healthUrl = new URL(url).origin + "/";
     while (Date.now() < deadline && generation === this.generation && this.child) {
       if (await this.probe(healthUrl)) {
+        if (this.startupTimer) clearTimeout(this.startupTimer);
+        this.startupTimer = undefined;
         this.status = "online";
         this.message = "运行正常，恢复保护已启用";
         this.startedAt = new Date();
@@ -289,8 +293,10 @@ export class HarnessSupervisor extends EventEmitter {
   private clearTimers(): void {
     if (this.healthTimer) clearInterval(this.healthTimer);
     if (this.probationTimer) clearTimeout(this.probationTimer);
+    if (this.startupTimer) clearTimeout(this.startupTimer);
     this.healthTimer = undefined;
     this.probationTimer = undefined;
+    this.startupTimer = undefined;
   }
 
   private emitSnapshot(): void {

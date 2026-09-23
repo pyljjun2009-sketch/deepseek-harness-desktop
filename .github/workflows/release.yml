@@ -28,6 +28,11 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
       - run: npm run smoke:packaged
+      - run: npm run stress:packaged
+        env:
+          DSH_STRESS_ROUNDS: "2"
+          DSH_STRESS_CONCURRENCY: "30"
+          DSH_SUPERVISOR_ROUNDS: "1"
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:

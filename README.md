@@ -20,6 +20,8 @@ npm run verify
 npm run dist:win
 ```
 
+安装包级压力测试可运行 `npm run pack` 后执行 `npm run stress:packaged`；轮次与并发数可由 `DSH_STRESS_ROUNDS`、`DSH_STRESS_CONCURRENCY` 和 `DSH_SUPERVISOR_ROUNDS` 调整。最近一次多轮结果与覆盖限制见 [压力测试记录](docs/stress-test-2026-09-23.md)。
+
 安装包会生成在 `release/`。卸载时不会删除用户数据或恢复记录。为防止 Windows 长路径造成依赖文件缺失，安装器使用默认目录，并拒绝长度超过 74 字符的安装路径；默认用户路径过长时可用 NSIS 的 `/S /D=C:\DSHDesktop` 参数安装到短路径。当前安装包未做代码签名；Windows 可能显示 SmartScreen 提示。
 
 ## 恢复模型
