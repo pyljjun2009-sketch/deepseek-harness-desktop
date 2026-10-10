@@ -1,0 +1,263 @@
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -27,7 +27,7 @@ async function main(): Promise<void> {
+     profile: 'desktop',
+     resolvedProfile: { profile, installAnchor },
+     patchFiles: [],
+-    args: ['--no-open', '--port', '19387'],
++    args: ['--no-open', '--port', '0'],
+     ...(process.argv[5] === undefined ? {} : {
+       packageManager: {
+         command: process.execPath,
+diff --git a/apps/desktop/scripts/prepare-dsh.ts b/apps/desktop/scripts/prepare-dsh.ts
+index 442e0175..1906985c 100644
+--- a/apps/desktop/scripts/prepare-dsh.ts
++++ b/apps/desktop/scripts/prepare-dsh.ts
+@@ -82,6 +82,7 @@ function runPnpm(args: readonly string[]): Promise<void> {
+       `--config.store-dir=${STORE_ROOT}`,
+       '--config.enable-global-virtual-store=false',
+       `--config.userconfig=${userConfig}`,
++      ...(process.env.DSH_COMMUNITY_PNPMFILE ? ['--pnpmfile', resolve(process.env.DSH_COMMUNITY_PNPMFILE)] : []),
+       command,
+       ...commandArgs,
+     ], {
+@@ -122,7 +123,12 @@ async function main(): Promise<void> {
+       cpSync(join(PACKAGE_SET_ROOT, DESKTOP_PACKAGES_DIR), join(BUILD_ROOT, DESKTOP_PACKAGES_DIR), { recursive: true })
+       createRuntimeProjectMetadata(BUILD_ROOT, release)
+     })
+-    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:lockfile', () => runPnpm(['install', '--lockfile-only']))
++    const retainedLock = process.env.DSH_COMMUNITY_RUNTIME_LOCK
++    if (retainedLock !== undefined) {
++      copyFileSync(resolve(retainedLock), join(BUILD_ROOT, 'pnpm-lock.yaml'))
++    } else {
++      await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:lockfile', () => runPnpm(['install', '--lockfile-only']))
++    }
+     verifyDesktopCoreLockfile(
+       readFileSync(join(BUILD_ROOT, 'pnpm-lock.yaml'), 'utf8'),
+       readDesktopCorePackageSet(BUILD_ROOT, release.version),
+@@ -157,6 +163,9 @@ async function main(): Promise<void> {
+       await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'sign:dsh-native', () => signMacOSRuntime(DSH_OUTPUT_ROOT, resolveDesktopAppId(process.env), resolveMacOSSigningEnvironment(process.env), target.arch, join(BUILD_PATHS.root, 'signature-cache')))
+       await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'sign:primary-native', () => signMacOSRuntime(join(RUNTIME_ROOT, 'primary-runtime'), resolveDesktopAppId(process.env), resolveMacOSSigningEnvironment(process.env), target.arch, join(BUILD_PATHS.root, 'signature-cache')))
+     }
++    // Keep the installed production closure for downstream audit and frozen rebuilds.
++    copyFileSync(join(BUILD_ROOT, 'pnpm-lock.yaml'), join(DSH_OUTPUT_ROOT, 'pnpm-lock.yaml'))
++    copyFileSync(join(BUILD_ROOT, DESKTOP_PACKAGE_SET_FILE), join(DSH_OUTPUT_ROOT, DESKTOP_PACKAGE_SET_FILE))
+     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:manifests', () => prepareRuntimeManifests(DSH_OUTPUT_ROOT))
+     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:primary-smoke', async () => smokePrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime')))
+     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:write-descriptor', async () => writeDesktopRuntime(DSH_OUTPUT_ROOT, release, packageSet.packages.map(entry => entry.name), target))
+diff --git a/apps/desktop/scripts/prepare-runtime.ts b/apps/desktop/scripts/prepare-runtime.ts
+index 1b88f091..1eb0630c 100644
+--- a/apps/desktop/scripts/prepare-runtime.ts
++++ b/apps/desktop/scripts/prepare-runtime.ts
+@@ -35,8 +35,14 @@ async function main(): Promise<void> {
+   const arch = target.endsWith('arm64') ? 'arm64' : 'x64'
+   const require = createRequire(import.meta.url)
+   const { version } = require('electron/package.json') as { version: string }
++  // The frozen Electron npm package carries the same official SHA-256 manifest.
++  // Keep checksum verification active without a second blocked GitHub request.
++  const checksums = require('electron/checksums.json') as Record<string, string>
++  if (!/^[a-f0-9]{64}$/u.test(checksums[`electron-v${version}-${platform}-${arch}.zip`] ?? '')) {
++    throw new Error('desktop runtime: frozen Electron package has no target checksum')
++  }
+   const archive = await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'download:electron',
+-    () => downloadArtifact({ version, platform, arch, artifactName: 'electron', cacheRoot: BUILD_PATHS.downloads }))
++    () => downloadArtifact({ version, platform, arch, artifactName: 'electron', checksums, cacheRoot: BUILD_PATHS.downloads }))
+   rmSync(BUILD_PATHS.electron, { recursive: true, force: true })
+   await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'extract:electron', () => extractZip(archive, { dir: BUILD_PATHS.electron }))
+   const executable = join(BUILD_PATHS.electron, platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron')
+diff --git a/apps/desktop/src/fatal-recovery.ts b/apps/desktop/src/fatal-recovery.ts
+index 5a739b12..c41ba7f6 100644
+--- a/apps/desktop/src/fatal-recovery.ts
++++ b/apps/desktop/src/fatal-recovery.ts
+@@ -4,6 +4,7 @@ import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron'
+ import type { CrashReportSource } from './crash-report.ts'
+ import { formatDesktopMessage, type DesktopMessages } from './locale.ts'
+ import { desktopErrorState } from './startup-error.ts'
++import { communityRecover } from './community-adapter.ts'
+ 
+ interface RecoveryOperations {
+   messages(): DesktopMessages
+@@ -67,6 +68,15 @@ export class DesktopFatalRecovery {
+     this.reported = true
+     const messages = this.operations.messages()
+     const reportPath = await this.persist(error, source)
++    const automatic = await communityRecover()
++    if (automatic !== 'manual') {
++      try {
++        await this.operations.stop()
++        if (automatic === 'disable-plugins') await this.operations.disablePlugins()
++        this.operations.restart()
++        return
++      } catch (failure) { console.error('Automatic recovery failed', failure) }
++    }
+     let detail = desktopErrorState(error).message
+     let message = messages.fatalSummary
+     for (;;) {
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index b4b8153b..cebb1798 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -59,6 +59,7 @@ import { DesktopUpdateOverlays } from './update-overlay.ts'
+ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
+ import { DesktopTray } from './tray.ts'
+ import { DesktopBackgroundNotice } from './background-notice.ts'
++import { communityReady, communityPending, communityHealthProbe, communitySchemeRegistered } from './community-adapter.ts'
+ 
+ let focusPrimaryWindow = (): void => {}
+ let stopForRecovery = async (): Promise<void> => {}
+@@ -100,7 +101,7 @@ const recovery = new DesktopFatalRecovery({
+     console.info('Desktop profile recovery completed:', { profilePatchBackup: backupPath ?? null, homePatch: 'unchanged' })
+   },
+   exit: () => { quitWithoutConfirmation() },
+-  restart: () => { app.relaunch(); quitWithoutConfirmation() },
++  restart: () => { app.relaunch({ execPath: process.env.DSH_COMMUNITY_RELAUNCH_PATH ?? process.execPath }); quitWithoutConfirmation() },
+   writeReport: (error, source) => persistCrashReport(error, source),
+ })
+ 
+@@ -120,6 +121,7 @@ function persistCrashReport(error: unknown, source: CrashReportSource): Promise<
+ }
+ 
+ function reportFatal(error: unknown, source: CrashReportSource): void {
++  communityPending()
+   console.error(error)
+   if (shuttingDown) {
+     // No dialog during shutdown, but the report still records what failed on the way out.
+@@ -129,7 +131,7 @@ function reportFatal(error: unknown, source: CrashReportSource): void {
+   void recovery.report(error, source).catch((failure: unknown) => { console.error(failure); app.exit(1) })
+ }
+ 
+-protocol.registerSchemesAsPrivileged([{
++if (!communitySchemeRegistered()) protocol.registerSchemesAsPrivileged([{
+   scheme: SCHEME,
+   privileges: {
+     standard: true,
+@@ -349,7 +351,7 @@ async function main(): Promise<void> {
+   let updateStoppedHost = false
+   let updateStopFailure: DesktopHostUncleanExitError | undefined
+   let updateState: DesktopUpdateState = { phase: 'idle' }
+-  const systemLanguages = app.getPreferredSystemLanguages()
++  const systemLanguages = ['zh-CN', ...app.getPreferredSystemLanguages()]
+   let locale = resolveDesktopStartupLocale(null, systemLanguages)
+   windowsLanguage = locale.id
+   let mandatoryPolicy: DesktopMandatoryUpdatePolicy | undefined
+@@ -382,7 +384,7 @@ async function main(): Promise<void> {
+   // Copy comes from the same locale as the update prompts so the dialog
+   // chrome and its content never mix languages.
+   const showAbout = async (): Promise<void> => {
+-    await ordinaryMessageBox({ type: 'info', title: locale.messages.aboutMenu, message: locale.messages.aboutProduct,
++    await ordinaryMessageBox({ type: 'info', title: locale.messages.aboutMenu, message: `${locale.messages.aboutProduct} · 社区恢复版`,
+       detail: formatDesktopMessage(locale.messages.aboutVersion, { version: app.getVersion() }),
+       buttons: [locale.messages.updateAcknowledge], cancelId: 0 })
+   }
+@@ -509,7 +511,14 @@ async function main(): Promise<void> {
+     }
+   }, (state) => {
+     if (state.phase === 'error') reportFatal(state.failure, 'host')
+-    else if (!shuttingDown) backendReady = state.phase === 'ready'
++    else if (!shuttingDown) {
++      backendReady = state.phase === 'ready'
++      if (backendReady) communityReady(
++        communityHealthProbe(hostUrl, hostCookie),
++        () => reportFatal(new Error('本地服务持续健康检查失败'), 'host'),
++      )
++      else communityPending()
++    }
+   })
+ 
+   const updateErrors = new WeakMap<DesktopUpdateState, Promise<void>>()
+@@ -568,6 +577,10 @@ async function main(): Promise<void> {
+     startup ??= (async () => {
+       await navigateMain(applicationUrl)
+       await backend.start(async () => {
++        if (process.env.DSH_COMMUNITY_RESET_PLUGINS === '1') {
++          delete process.env.DSH_COMMUNITY_RESET_PLUGINS
++          await manager.disableAllPlugins()
++        }
+         await Promise.all([manager.applyRelease(), prepareHostEnvironment()])
+       })
+       if (backend.host !== undefined) await openInitialWindow()
+@@ -1225,7 +1238,7 @@ async function main(): Promise<void> {
+     window.focus()
+   }
+ 
+-  if (app.isPackaged || process.env.DSH_DESKTOP_DEV_APP === '1') app.setAsDefaultProtocolClient('dsh')
++  if ((app.isPackaged && !process.env.DSH_COMMUNITY_TEST_ROOT) || process.env.DSH_DESKTOP_DEV_APP === '1') app.setAsDefaultProtocolClient('dsh')
+   app.on('open-url', (event, url) => {
+     event.preventDefault()
+     if (url === 'dsh://open' || url === 'dsh://open/') focusPrimaryWindow()
+@@ -1239,6 +1252,7 @@ async function main(): Promise<void> {
+   })
+   if (process.platform !== 'win32') powerMonitor.on('shutdown', () => { sessionEnding = true })
+   const finishQuit = (): void => {
++    communityPending()
+     quitting = true
+     shuttingDown = true
+     updateJournal?.action('quit-requested')
+@@ -1258,6 +1272,7 @@ async function main(): Promise<void> {
+   }
+   app.on('before-quit', (event) => {
+     if (shellInstallerOwnsQuit) {
++      communityPending()
+       shuttingDown = true
+       quitConfirmation.dispose()
+       backgroundNotice?.dispose()
+diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
+index 8d6eb808..598c005a 100644
+--- a/apps/desktop/src/update-coordinator.ts
++++ b/apps/desktop/src/update-coordinator.ts
+@@ -66,8 +66,8 @@ export class DesktopUpdateCoordinator {
+     }
+     this.updater.autoDownload = false
+     this.updater.autoInstallOnAppQuit = false
+-    this.updater.channel = 'nightly'
+-    this.updater.allowPrerelease = true
++    this.updater.channel = 'latest'
++    this.updater.allowPrerelease = false
+     // Selecting a channel can enable downgrade in electron-updater.
+     this.updater.allowDowngrade = false
+     this.updater.on('download-progress', this.onProgress)
+diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
+index 790ad63f..e30cb972 100644
+--- a/apps/desktop/tests/update-coordinator.spec.ts
++++ b/apps/desktop/tests/update-coordinator.spec.ts
+@@ -145,8 +145,8 @@ describe('desktop update coordinator', () => {
+       'available', 'downloading', 'downloading', 'verifying', 'ready', 'installing',
+     ])
+     expect(f.updater).toMatchObject({
+-      autoDownload: false, autoInstallOnAppQuit: false, channel: 'nightly',
+-      allowPrerelease: true, allowDowngrade: false,
++      autoDownload: false, autoInstallOnAppQuit: false, channel: 'latest',
++      allowPrerelease: false, allowDowngrade: false,
+     })
+   })
+ 
+diff --git a/scripts/release/families.ts b/scripts/release/families.ts
+index 0a7d808d..2fc1f8eb 100644
+--- a/scripts/release/families.ts
++++ b/scripts/release/families.ts
+@@ -14,6 +14,7 @@ import { resolve } from 'node:path'
+ import {
+   officialClientBuildEnvironment,
+   readClientBuildRecord,
++  repositoryClientBuildEnvironment,
+ } from '../client-build-environment.ts'
+ import { validateTarballPayload } from '../publication-payload.ts'
+ 
+@@ -329,7 +330,15 @@ class DshFamily extends ReleaseFamily {
+ 
+   /** Require current artifacts from a complete official client build. */
+   override verifyBuildArtifacts(root: string): void {
+-    readClientBuildRecord(root, officialClientBuildEnvironment(root))
++    // A named downstream profile still requires the exact environment and artifact digest.
++    const community = process.env.DSH_COMMUNITY_PACK === '1'
++    if (community && (process.env.DSH_CLIENT_BUILD_PROFILE !== 'community'
++      || process.env.DSH_CLIENT_TITLE !== 'DeepSeek Harness Desktop · 社区恢复版')) {
++      throw new Error('community pack requires the pinned downstream client profile')
++    }
++    readClientBuildRecord(root, community
++      ? repositoryClientBuildEnvironment(root)
++      : officialClientBuildEnvironment(root))
+   }
+ 
+   /**

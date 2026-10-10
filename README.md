@@ -1,5 +1,34 @@
 # DeepSeek Harness Desktop
 
+> 基于 DeepSeek 官方桌面源码的 0.5.0 社区恢复候选版已通过自动资格验收（2026-10-11）。锁定官方 `0.2.0-rc.2`，默认中文，Sub2API 已移除。同一成品通过首次安装、同版本替换及独立卸载、三次真实崩溃恢复、两轮生产欢迎页正常退出及实际工作台/设置 UI 检查；原生文件夹选择和工作台原生菜单退出仍需人工确认。已发布稳定版保持 0.4.0，不更新 latest。安装包入口见 [发布目录](https://github.com/pyljjun2009-sketch/deepseek-harness-desktop/releases)；迁移、复现和限制见 [官方桌面升级说明](docs/official-desktop-upgrade.md)、[最新验证记录](docs/test-report-0.5.0.md) 和 [ADR 0006](docs/adr/0006-official-desktop-baseline.md)。
+
+## 0.5.0 官方桌面基线
+
+采用官方工作台、Host、项目与会话管理、API 配置、插件格式及完整解释器/Office 运行时；社区层只负责中文默认值、自己的更新源与完整安装恢复。它不是官方签名发行包，候选安装包未签名（Authenticode: NotSigned），Windows 可能显示安全提示；不使用官方 nightly，也不把新运行时与旧桌面壳混用。2026-10-10 官方发布列表已有 0.2.1-alpha.2，本候选不会自动切换到 alpha。
+
+恢复按“重试 → 禁用第三方插件 → 已校验完整稳定副本”有界执行，版本与数据槽配对回退。首次健康观察 45 秒后，还须完成约 1 GB 的物理快照和 SHA-256 校验，才能具备稳定副本恢复保障；没有完整副本或副本损坏时停止重试并保留记录。失败版本的新会话保留，不自动合并。全局 `.dsh` 和独立 Sub2API 目录不读取、不修改。
+
+本地 Host 使用系统分配的回环端口，避免上游默认 19387 被其他程序占用时重试/回滚仍失败；认证、桌面转发与健康检查仍使用官方返回的连接地址。此修复已纳入源码与密封门禁，并在最终包并行健康及真实回退中复测，见 [ADR 0008](docs/adr/0008-loopback-ephemeral-host-port.md)。
+
+看门狗在每次存活采样前检查本轮干净退出标记，修复 Windows 生产配置下已完成官方清理却仍等待退出的问题。两轮欢迎页正常关闭均确认主进程和看门狗自行退出、无重启且载荷不变；正常用户退出仍不在可取消的 before-quit 提前写标记，不添加新的强制退出路径。工作台原生菜单退出与欢迎页关闭不同，仍须人工验收，见 [ADR 0009](docs/adr/0009-watchdog-clean-shutdown-handshake.md)。
+
+Windows x64 开发与构建：
+
+```powershell
+npm ci
+$env:DSH_OFFICIAL_SOURCE = 'C:\DSHB\harness-020rc2'
+npm run verify
+npm run dist:official
+```
+
+正式安装包的发行版本来自 `official.lock.json`，而根 package 的 0.4.0 仍是保留的旧壳工具版本。默认 `dist:win` 已指向官方构建，GitHub 发布流程也改为官方构建并要求隔离安装/真实恢复资格测试。仅完成完整准备后可用 `--stage-only` 复用经校验资源；仅封装安装器可用 `dist:official:repackage`，不会跳过载荷门禁，也不会主动上传。
+
+当前候选的原生目录选择使用官方 Electron 对话框，不再运行旧 Win32 folder dialog worker。真实对话框交互仍须验收，不把单测等同于本机点击通过。模型配置沿用官方入口；没有真实模型负载测量，因此不宣称 token 节省百分比。
+
+## 0.4.0 旧监督壳历史说明
+
+以下只适用于已发布 0.4.0，不是 0.5.0 的构建命令或数据布局。历史旧壳构建使用显式 `dist:legacy`。
+
 面向 Windows 的 DeepSeek Harness 桌面管理器。它不是对 Harness 的分叉，而是把官方 `@deepseek-ai/dsh` 作为可替换运行时，由一个独立桌面监督层负责启动、健康检查、升级、回滚和诊断。桌面版使用独立的托管 profile 目录，保持 DSH profile 与插件格式兼容，同时避免全局 `~/.dsh` 中的旧插件破坏恢复基线。
 
 当前恢复地板锁定为在独立托管 profile 上验证可用的 `@deepseek-ai/dsh@0.1.1-rc.2`；稳定通道会发现 npm `latest`，但只有通过完整候选预检和观察期才会晋升。2026-09-22 对 `0.1.5-rc.2` 的独立安装验证发现上游 Web 插件树缺少运行时依赖，本桌面版会拒绝激活该候选并继续运行稳定版；这不是已验证可用的升级。预览通道可以发现 alpha 版本，但默认不会自动安装。
@@ -13,11 +42,11 @@ npm install
 npm run dev
 ```
 
-生产验证与 Windows 安装包：
+旧壳生产验证与 Windows 安装包：
 
 ```powershell
 npm run verify
-npm run dist:win
+npm run dist:legacy
 ```
 
 安装包级压力测试可运行 `npm run pack` 后执行 `npm run stress:packaged`；轮次与并发数可由 `DSH_STRESS_ROUNDS`、`DSH_STRESS_CONCURRENCY` 和 `DSH_SUPERVISOR_ROUNDS` 调整。最近一次多轮结果与覆盖限制见 [压力测试记录](docs/stress-test-2026-09-23.md)。

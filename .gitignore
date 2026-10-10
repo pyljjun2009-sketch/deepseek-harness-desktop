@@ -10,5 +10,7 @@ coverage/
 .smoke-*/
 .token-config-test-home/
 .env
+.official-build/
+output/playwright/
 .env.*
 !.env.example
