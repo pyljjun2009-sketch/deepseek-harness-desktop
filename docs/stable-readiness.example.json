@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.0",
+  "candidateIdentity": "1406ff90-69d1-4b18-a244-514ca8970ac6",
+  "officialCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+  "candidatePayloadSha256": "addf5bbf1f7713b05e4a27cba13c1f96483744db6fe00fd944ad63f1130c445a",
+  "candidateInstallerSha256": "0b4be3daf0a6acd25617d79b53978968ac9ea416128934326fabbefeb3c4a5b6",
+  "reports": {
+    "installer": "installer-qualification-aa996301-0f28-481f-9abd-f860389f7b0c/report.json",
+    "recovery": "recovery-qualification-1cbb5dcc-30a3-440d-9ff3-38b2ba1c9a0a/report.json",
+    "ui": "public-ui-summary.json"
+  },
+  "manual": {
+    "platform": "win32-x64",
+    "method": "native-visible-interaction",
+    "operatorConfirmed": false,
+    "rounds": [
+      {
+        "round": 1,
+        "testedAt": null,
+        "nativeFolderPicker": "not-tested",
+        "nativeFolderCancel": "not-tested",
+        "nativeFolderChineseSpacePath": "not-tested",
+        "workspaceMenuQuit": "not-tested",
+        "processStopped": "not-tested",
+        "relaunch": "not-tested",
+        "noRestartObservedMs": 0
+      },
+      {
+        "round": 2,
+        "testedAt": null,
+        "nativeFolderPicker": "not-tested",
+        "nativeFolderCancel": "not-tested",
+        "nativeFolderChineseSpacePath": "not-tested",
+        "workspaceMenuQuit": "not-tested",
+        "processStopped": "not-tested",
+        "relaunch": "not-tested",
+        "noRestartObservedMs": 0
+      }
+    ]
+  }
+}

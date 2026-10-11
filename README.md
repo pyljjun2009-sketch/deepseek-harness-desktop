@@ -21,9 +21,22 @@ npm run verify
 npm run dist:official
 ```
 
-正式安装包的发行版本来自 `official.lock.json`，而根 package 的 0.4.0 仍是保留的旧壳工具版本。默认 `dist:win` 已指向官方构建，GitHub 发布流程也改为官方构建并要求隔离安装/真实恢复资格测试。仅完成完整准备后可用 `--stage-only` 复用经校验资源；仅封装安装器可用 `dist:official:repackage`，不会跳过载荷门禁，也不会主动上传。
+正式安装包的发行版本来自 `official.lock.json`，而根 package 的 0.4.0 仍是保留的旧壳工具版本。默认 `dist:win` 已指向官方构建，本候选分支的 GitHub 工作流使用官方构建并要求隔离安装/真实恢复资格测试，仅保存安装器与 blockmap 构建产物，不自动发布 Release 或 latest。仅完成完整准备后可用 `--stage-only` 复用经校验资源；仅封装安装器可用 `dist:official:repackage`，不会跳过载荷门禁，也不会主动上传。
 
 当前候选的原生目录选择使用官方 Electron 对话框，不再运行旧 Win32 folder dialog worker。真实对话框交互仍须验收，不把单测等同于本机点击通过。模型配置沿用官方入口；没有真实模型负载测量，因此不宣称 token 节省百分比。
+
+### 稳定晋升前的人工门槛
+
+按照 [本机人工验收操作单](docs/manual-acceptance-0.5.0.md) 完成两轮原生文件夹选择与工作台菜单退出后，才能填写 [本地记录模板](docs/stable-readiness.example.json) 的副本。模板默认全部未测试，不能提前填入通过。只读检查命令：
+
+```powershell
+npm run qualify:stable:automatic
+npm run qualify:stable
+```
+
+前者再次核对同一成品的自动安装、恢复与界面报告；后者要求 `.official-build/stable-readiness.json` 中有同一安装器哈希的两轮维护者人工声明。缺少记录、失败、未测试或绑定错误都会阻止就绪判定。人工声明不是实机点击的自动证明，检查通过也不构成发布授权；两条命令都不会启动桌面程序、读取账号或改写 GitHub/更新通道。
+
+此 CI 保护属于候选分支的新增改动，仍需 PR 审核合并；没有直接修改 `main` 或历史引用上的工作流，不代表仓库所有旧标签的发布规则已全局关闭。现有 0.5.0 候选安装器及其测试证据保持不变，0.4.0 仍是稳定版。
 
 ## 0.4.0 旧监督壳历史说明
 

@@ -19,6 +19,8 @@
 - In Electron, installation snapshots use `original-fs` to preserve physical ASAR bytes. Never globally disable ASAR support.
 - Installer/uninstaller checks are readonly: refuse when processes remain or detection is uncertain; never terminate by filename.
 - Match a release tag to `official.lock.json.distributionVersion` and pass qualifications before updating latest.
+- Native folder selection and workspace native-menu quit require two human acceptance rounds bound to the exact installer/payload hashes. Never prefill pass or treat a welcome-window close as workspace-menu acceptance.
+- `qualify:stable` is read-only readiness, not publication authorization. CI rebuilds save candidate artifacts only; do not restore automatic Release/latest writes without reviewed promotion requirements.
 - Renderer code receives only narrow, validated IPC methods. Never expose raw `ipcRenderer`, shell, or filesystem access.
 
 ## Done means

@@ -1,4 +1,4 @@
-name: release-windows
+name: qualify-windows
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,17 +52,13 @@ jobs:
       - name: Qualify full isolated install, replacement and uninstall
         run: npm run qualify:installer
         timeout-minutes: 30
+      # A tag is not human acceptance. Keep release publication/latest updates out
+      # of this rebuild job: a rebuilt binary has a new identity and needs its own
+      # native folder/menu acceptance, even when its source version is unchanged.
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: official-desktop-qualification
-          path: .official-build/**/report.json
-          if-no-files-found: ignore
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          generate_release_notes: true
-          files: |
+          name: official-desktop-candidate-not-stable
+          path: |
             release/DeepSeek-Harness-Desktop-*.exe
             release/DeepSeek-Harness-Desktop-*.exe.blockmap
-            release/latest.yml
+          if-no-files-found: error
