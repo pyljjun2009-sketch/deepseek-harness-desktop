@@ -1,0 +1,2 @@
+# The overlay is a hashed build input; preserve its bytes and unified-diff context spaces.
+desktop/official-overlay.patch -text whitespace=-blank-at-eol
