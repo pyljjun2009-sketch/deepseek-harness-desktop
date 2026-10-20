@@ -1,4 +1,4 @@
-name: release-windows
+name: qualify-windows
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,20 +21,44 @@ jobs:
       # npm 11 can skip Electron's lifecycle downloader; electronDist requires
       # the unpacked runtime to exist before electron-builder starts.
       - run: node node_modules/electron/install.js
+      - name: Require the official distribution version for a release tag
+        run: >-
+          node -e "const v=require('./official.lock.json').distributionVersion;
+          if(process.env.GITHUB_REF_TYPE==='tag' && process.env.GITHUB_REF_NAME!=='desktop-v'+v)
+          throw new Error('Release tag does not match official.lock.json');"
       - run: npm run verify
-      - run: npx electron-builder --win nsis --x64 --publish never
-        timeout-minutes: 30
+      - name: Build the frozen official desktop (not the legacy supervisor)
+        run: npm run dist:official
+        timeout-minutes: 90
         env:
+          DSH_OFFICIAL_SOURCE: C:\DSHBuild\harness-021rc2
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-      - run: npm run smoke:packaged
-      - run: npm run stress:packaged
+      - name: Real native installer guard and directory transaction tests
+        run: npm run test:installer
         env:
-          DSH_STRESS_ROUNDS: "2"
-          DSH_STRESS_CONCURRENCY: "30"
-          DSH_SUPERVISOR_ROUNDS: "1"
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+          DSH_INSTALLER_NATIVE_TEST: "1"
+      - name: Seal the final NSIS copy and installer identity
+        run: npm run dist:official:repackage
+        timeout-minutes: 30
+      - name: Verify the real frozen shell and Host port policy
+        run: npm run test:shell
+        env:
+          DSH_SHELL_REAL_TEST: "1"
+          DSH_OFFICIAL_SOURCE: C:\DSHBuild\harness-021rc2
+      - name: Qualify three real crashes with the production watchdog
+        run: npm run qualify:recovery
+        timeout-minutes: 30
+      - name: Qualify full isolated install, replacement and uninstall
+        run: npm run qualify:installer
+        timeout-minutes: 45
+      # A tag is not human acceptance. Keep release publication/latest updates out
+      # of this rebuild job: a rebuilt binary has a new identity and needs its own
+      # native folder/menu acceptance, even when its source version is unchanged.
+      - uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: release/*
+          name: official-desktop-candidate-not-stable
+          path: |
+            release/DeepSeek-Harness-Desktop-*.exe
+            release/DeepSeek-Harness-Desktop-*.exe.blockmap
+          if-no-files-found: error

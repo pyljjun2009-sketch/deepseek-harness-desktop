@@ -1,5 +1,69 @@
 # DeepSeek Harness Desktop
 
+> 2026-10-20：社区恢复版 `0.6.0` 已基于官方 `0.2.1-rc.2` 完成重构和 Windows 安装包封装。固定官方包已通过大小、SHA-512 和独立 Windows 数字签名核对；版本化升级接口 v1 已实现并打入成品。新成品已独立通过安装/覆盖/卸载及三轮崩溃恢复，不沿用 0.5.0 的通过记录。仍为候选版：原生交互待人工验收、生产依赖有已知中等级风险；不改稳定版或 latest。
+
+## 0.6.0 升级与接口（社区候选）
+
+固定官方同版本源码提交 `687f282e8625c6b8d11ff58211a90524be2e4317`，配套 pnpm `11.28.5`、Electron `44.7.0`。默认中文、完整运行时、独立数据槽和有界完整副本恢复继续保留；Sub2API 不恢复集成。官方版本本身仍为 RC，不将其宣传为稳定发行。[官方发布记录](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.2)
+
+实际升级接口支持“检查 / 下载 / 校验 / 生成重构计划”，只接受固定官方 Windows x64 HTTPS 包，校验大小与 SHA-512，不执行官方安装器、不覆盖社区版、不接触全局 `.dsh`。桌面自己的更新仍走本仓库 `latest`；官方 nightly 仅用于显式开发检查，不连接自动安装。接口与未来接入边界见 [升级接口 v1](docs/official-upgrade-api.md) 和 [ADR 0010](docs/adr/0010-official-upgrade-provider.md)。
+
+在 Node 24 / Windows x64 下：
+
+```powershell
+npm ci
+npm run upgrade:official:check
+npm run upgrade:official:download
+npm run upgrade:official:plan
+npm run verify
+```
+
+成品为 `release/DeepSeek-Harness-Desktop-0.6.0-x64.exe`（约 288 MB），SHA-256：`1bb6c3cce3c3d149e6cafcdb2b9b40cef9fff0828acb83e20e5cb3826683d0ab`。社区安装包未签名；官方包签名有效不代表此重构包有签名。当前源基线构建及测试范围见 [0.6.0 验证记录](docs/test-report-0.6.0.md)。
+
+请使用 [0.6.0 本机人工验收单](docs/manual-acceptance-0.6.0.md) 和 [0.6.0 未验收模板](docs/stable-readiness-0.6.0.example.json)，不要复用下方历史 0.5.0 的绑定值。只有同一成品的自动资格、两轮原生交互及已知风险审阅均完成后，才可另行决定稳定晋升；通过只读检查本身不授权发布。
+
+## 0.5.0 官方桌面基线（历史候选）
+
+以下命令和成品通过记录绑定历史 0.5.0，而非当前 0.6.0 输入。需要复现历史候选时使用其发行标签。[候选发布目录](https://github.com/pyljjun2009-sketch/deepseek-harness-desktop/releases/tag/candidate-v0.5.0-20261011)、[历史验证记录](docs/test-report-0.5.0.md)。
+
+采用官方工作台、Host、项目与会话管理、API 配置、插件格式及完整解释器/Office 运行时；社区层只负责中文默认值、自己的更新源与完整安装恢复。它不是官方签名发行包，候选安装包未签名（Authenticode: NotSigned），Windows 可能显示安全提示；不使用官方 nightly，也不把新运行时与旧桌面壳混用。2026-10-10 官方发布列表已有 0.2.1-alpha.2，本候选不会自动切换到 alpha。
+
+恢复按“重试 → 禁用第三方插件 → 已校验完整稳定副本”有界执行，版本与数据槽配对回退。首次健康观察 45 秒后，还须完成约 1 GB 的物理快照和 SHA-256 校验，才能具备稳定副本恢复保障；没有完整副本或副本损坏时停止重试并保留记录。失败版本的新会话保留，不自动合并。全局 `.dsh` 和独立 Sub2API 目录不读取、不修改。
+
+本地 Host 使用系统分配的回环端口，避免上游默认 19387 被其他程序占用时重试/回滚仍失败；认证、桌面转发与健康检查仍使用官方返回的连接地址。此修复已纳入源码与密封门禁，并在最终包并行健康及真实回退中复测，见 [ADR 0008](docs/adr/0008-loopback-ephemeral-host-port.md)。
+
+看门狗在每次存活采样前检查本轮干净退出标记，修复 Windows 生产配置下已完成官方清理却仍等待退出的问题。两轮欢迎页正常关闭均确认主进程和看门狗自行退出、无重启且载荷不变；正常用户退出仍不在可取消的 before-quit 提前写标记，不添加新的强制退出路径。工作台原生菜单退出与欢迎页关闭不同，仍须人工验收，见 [ADR 0009](docs/adr/0009-watchdog-clean-shutdown-handshake.md)。
+
+Windows x64 开发与构建：
+
+```powershell
+npm ci
+$env:DSH_OFFICIAL_SOURCE = 'C:\DSHB\harness-020rc2'
+npm run verify
+npm run dist:official
+```
+
+正式安装包的发行版本来自 `official.lock.json`，而根 package 的 0.4.0 仍是保留的旧壳工具版本。默认 `dist:win` 已指向官方构建，本候选分支的 GitHub 工作流使用官方构建并要求隔离安装/真实恢复资格测试，仅保存安装器与 blockmap 构建产物，不自动发布 Release 或 latest。仅完成完整准备后可用 `--stage-only` 复用经校验资源；仅封装安装器可用 `dist:official:repackage`，不会跳过载荷门禁，也不会主动上传。
+
+当前候选的原生目录选择使用官方 Electron 对话框，不再运行旧 Win32 folder dialog worker。真实对话框交互仍须验收，不把单测等同于本机点击通过。模型配置沿用官方入口；没有真实模型负载测量，因此不宣称 token 节省百分比。
+
+### 稳定晋升前的人工门槛
+
+按照 [本机人工验收操作单](docs/manual-acceptance-0.5.0.md) 完成两轮原生文件夹选择与工作台菜单退出后，才能填写 [本地记录模板](docs/stable-readiness.example.json) 的副本。模板默认全部未测试，不能提前填入通过。只读检查命令：
+
+```powershell
+npm run qualify:stable:automatic
+npm run qualify:stable
+```
+
+前者再次核对同一成品的自动安装、恢复与界面报告；后者要求 `.official-build/stable-readiness.json` 中有同一安装器哈希的两轮维护者人工声明。缺少记录、失败、未测试或绑定错误都会阻止就绪判定。人工声明不是实机点击的自动证明，检查通过也不构成发布授权；两条命令都不会启动桌面程序、读取账号或改写 GitHub/更新通道。
+
+此 CI 保护属于候选分支的新增改动，仍需 PR 审核合并；没有直接修改 `main` 或历史引用上的工作流，不代表仓库所有旧标签的发布规则已全局关闭。现有 0.5.0 候选安装器及其测试证据保持不变，0.4.0 仍是稳定版。
+
+## 0.4.0 旧监督壳历史说明
+
+以下只适用于已发布 0.4.0，不是 0.5.0 的构建命令或数据布局。历史旧壳构建使用显式 `dist:legacy`。
+
 面向 Windows 的 DeepSeek Harness 桌面管理器。它不是对 Harness 的分叉，而是把官方 `@deepseek-ai/dsh` 作为可替换运行时，由一个独立桌面监督层负责启动、健康检查、升级、回滚和诊断。桌面版使用独立的托管 profile 目录，保持 DSH profile 与插件格式兼容，同时避免全局 `~/.dsh` 中的旧插件破坏恢复基线。
 
 当前恢复地板锁定为在独立托管 profile 上验证可用的 `@deepseek-ai/dsh@0.1.1-rc.2`；稳定通道会发现 npm `latest`，但只有通过完整候选预检和观察期才会晋升。2026-09-22 对 `0.1.5-rc.2` 的独立安装验证发现上游 Web 插件树缺少运行时依赖，本桌面版会拒绝激活该候选并继续运行稳定版；这不是已验证可用的升级。预览通道可以发现 alpha 版本，但默认不会自动安装。
@@ -13,11 +77,11 @@ npm install
 npm run dev
 ```
 
-生产验证与 Windows 安装包：
+旧壳生产验证与 Windows 安装包：
 
 ```powershell
 npm run verify
-npm run dist:win
+npm run dist:legacy
 ```
 
 安装包级压力测试可运行 `npm run pack` 后执行 `npm run stress:packaged`；轮次与并发数可由 `DSH_STRESS_ROUNDS`、`DSH_STRESS_CONCURRENCY` 和 `DSH_SUPERVISOR_ROUNDS` 调整。最近一次多轮结果与覆盖限制见 [压力测试记录](docs/stress-test-2026-09-23.md)。
