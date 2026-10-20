@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import recoveryModule from '../desktop/recovery.cjs';
 import { selectQualificationPayload, payloadInventory } from './qualify-official-installer.mjs';
+import { assertPhysicalAncestors, nativeStorage } from './community-build-storage.mjs';
 
 const run = promisify(execFile);
 if (process.platform !== 'win32' || !process.argv.includes('--run')) {
@@ -24,7 +25,7 @@ const executable = join(selected.payload, 'DeepSeekHarness.exe');
 const identity = randomUUID();
 const test = join(project, '.official-build', `recovery-qualification-${identity}`);
 // Keep the 1 GB / ~10,000 file snapshot outside OneDrive and well within the Windows path budget.
-const scratch = resolve('C:/DSHRQ');
+const scratch = resolve(nativeStorage.recovery);
 const home = join(scratch, identity, 'home');
 assert.equal(dirname(dirname(home)), scratch);
 const result = join(test, 'healthy.json');
@@ -34,7 +35,9 @@ const cachedExecutable = join(home, 'stable-releases', version, 'DeepSeekHarness
 const env = { ...process.env, DSH_COMMUNITY_TEST_ROOT: home, DSH_COMMUNITY_EXERCISE_RECOVERY: '1',
   DSH_COMMUNITY_SMOKE_RESULT: result, PYTHONDONTWRITEBYTECODE: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
+await assertPhysicalAncestors(scratch);
 await mkdir(scratch, { recursive: true });
+await assertPhysicalAncestors(scratch);
 assert((await lstat(scratch)).isDirectory() && !(await lstat(scratch)).isSymbolicLink());
 await mkdir(dirname(home)); // Fail rather than reuse an existing identity.
 await mkdir(home);
@@ -79,6 +82,7 @@ async function marker(record) {
   const token = validRecord(record);
   // The UUID storage belongs to this run, but still reject any linked control or ancestor.
   for (const path of [scratch, dirname(home), home, dirname(record.watchdogControl)]) {
+    await assertPhysicalAncestors(path);
     const stat = await lstat(path); assert(stat.isDirectory() && !stat.isSymbolicLink());
   }
   try { const stat = await lstat(record.watchdogControl); assert(stat.isFile() && !stat.isSymbolicLink()); }

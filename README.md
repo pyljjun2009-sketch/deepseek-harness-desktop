@@ -1,8 +1,30 @@
 # DeepSeek Harness Desktop
 
-> 基于 DeepSeek 官方桌面源码的 0.5.0 社区恢复候选版已通过自动资格验收（2026-10-11）。锁定官方 `0.2.0-rc.2`，默认中文，Sub2API 已移除。同一成品通过首次安装、同版本替换及独立卸载、三次真实崩溃恢复、两轮生产欢迎页正常退出及实际工作台/设置 UI 检查；原生文件夹选择和工作台原生菜单退出仍需人工确认。已发布稳定版保持 0.4.0，不更新 latest。安装包入口见 [发布目录](https://github.com/pyljjun2009-sketch/deepseek-harness-desktop/releases)；迁移、复现和限制见 [官方桌面升级说明](docs/official-desktop-upgrade.md)、[最新验证记录](docs/test-report-0.5.0.md) 和 [ADR 0006](docs/adr/0006-official-desktop-baseline.md)。
+> 2026-10-20：社区恢复版 `0.6.0` 已基于官方 `0.2.1-rc.2` 完成重构和 Windows 安装包封装。固定官方包已通过大小、SHA-512 和独立 Windows 数字签名核对；版本化升级接口 v1 已实现并打入成品。新成品已独立通过安装/覆盖/卸载及三轮崩溃恢复，不沿用 0.5.0 的通过记录。仍为候选版：原生交互待人工验收、生产依赖有已知中等级风险；不改稳定版或 latest。
 
-## 0.5.0 官方桌面基线
+## 0.6.0 升级与接口（社区候选）
+
+固定官方同版本源码提交 `687f282e8625c6b8d11ff58211a90524be2e4317`，配套 pnpm `11.28.5`、Electron `44.7.0`。默认中文、完整运行时、独立数据槽和有界完整副本恢复继续保留；Sub2API 不恢复集成。官方版本本身仍为 RC，不将其宣传为稳定发行。[官方发布记录](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.2)
+
+实际升级接口支持“检查 / 下载 / 校验 / 生成重构计划”，只接受固定官方 Windows x64 HTTPS 包，校验大小与 SHA-512，不执行官方安装器、不覆盖社区版、不接触全局 `.dsh`。桌面自己的更新仍走本仓库 `latest`；官方 nightly 仅用于显式开发检查，不连接自动安装。接口与未来接入边界见 [升级接口 v1](docs/official-upgrade-api.md) 和 [ADR 0010](docs/adr/0010-official-upgrade-provider.md)。
+
+在 Node 24 / Windows x64 下：
+
+```powershell
+npm ci
+npm run upgrade:official:check
+npm run upgrade:official:download
+npm run upgrade:official:plan
+npm run verify
+```
+
+成品为 `release/DeepSeek-Harness-Desktop-0.6.0-x64.exe`（约 288 MB），SHA-256：`1bb6c3cce3c3d149e6cafcdb2b9b40cef9fff0828acb83e20e5cb3826683d0ab`。社区安装包未签名；官方包签名有效不代表此重构包有签名。当前源基线构建及测试范围见 [0.6.0 验证记录](docs/test-report-0.6.0.md)。
+
+请使用 [0.6.0 本机人工验收单](docs/manual-acceptance-0.6.0.md) 和 [0.6.0 未验收模板](docs/stable-readiness-0.6.0.example.json)，不要复用下方历史 0.5.0 的绑定值。只有同一成品的自动资格、两轮原生交互及已知风险审阅均完成后，才可另行决定稳定晋升；通过只读检查本身不授权发布。
+
+## 0.5.0 官方桌面基线（历史候选）
+
+以下命令和成品通过记录绑定历史 0.5.0，而非当前 0.6.0 输入。需要复现历史候选时使用其发行标签。[候选发布目录](https://github.com/pyljjun2009-sketch/deepseek-harness-desktop/releases/tag/candidate-v0.5.0-20261011)、[历史验证记录](docs/test-report-0.5.0.md)。
 
 采用官方工作台、Host、项目与会话管理、API 配置、插件格式及完整解释器/Office 运行时；社区层只负责中文默认值、自己的更新源与完整安装恢复。它不是官方签名发行包，候选安装包未签名（Authenticode: NotSigned），Windows 可能显示安全提示；不使用官方 nightly，也不把新运行时与旧桌面壳混用。2026-10-10 官方发布列表已有 0.2.1-alpha.2，本候选不会自动切换到 alpha。
 

@@ -77,6 +77,14 @@ test('synthetic automatic readiness cannot confer manual or publication approval
   assert.equal(Object.hasOwn(result, 'manualAttestationPassed'), false);
 });
 
+test('new physical QA recovery reports keep exact UUID binding without accepting arbitrary roots', () => {
+  const report = automaticFixture();
+  report.recovery.isolatedHome = 'C:\\DSHNative\\recovery\\' + recoveryIdentity + '\\home';
+  assert.equal(validateStableReadiness(manualFixture(), candidateFixture(), report, syntheticNow()).automaticPassed, true);
+  report.recovery.isolatedHome += '\\..\\home';
+  assert.throws(() => validateStableReadiness(manualFixture(), candidateFixture(), report, syntheticNow()), /report-identity-mismatch/);
+});
+
 test('synthetic full readiness is read-only and explicitly grants no publication authority', () => {
   const candidate = candidateFixture();
   const result = validateStableReadiness(manualFixture(candidate), candidate, automaticFixture(candidate), syntheticNow());
@@ -95,20 +103,22 @@ test('canonical report references are accepted but the shipped template stays un
   assert.ok(Object.isFrozen(manualCheckNames));
   assert.deepEqual([...manualCheckNames], ['nativeFolderPicker', 'nativeFolderCancel',
     'nativeFolderChineseSpacePath', 'workspaceMenuQuit', 'processStopped', 'relaunch']);
-  const pending = JSON.parse(await readFile(join(project, 'docs', 'stable-readiness.example.json'), 'utf8'));
-  assert.equal(pending.manual.operatorConfirmed, false);
-  assert.equal(pending.manual.rounds.length, 2);
-  for (const round of pending.manual.rounds) {
-    assert.equal(round.testedAt, null);
-    assert.equal(round.noRestartObservedMs, 0);
-    assert.ok(manualCheckNames.every(key => round[key] === 'not-tested'));
+  for (const filename of ['stable-readiness.example.json', 'stable-readiness-0.6.0.example.json']) {
+    const pending = JSON.parse(await readFile(join(project, 'docs', filename), 'utf8'));
+    assert.equal(pending.manual.operatorConfirmed, false);
+    assert.equal(pending.manual.rounds.length, 2);
+    for (const round of pending.manual.rounds) {
+      assert.equal(round.testedAt, null);
+      assert.equal(round.noRestartObservedMs, 0);
+      assert.ok(manualCheckNames.every(key => round[key] === 'not-tested'));
+    }
+    // Shape-only fixture from the pending template, not a physical candidate verification.
+    const matchingShape = { schemaVersion: 1, kind: 'official-nsis-candidate', version: pending.version,
+      identity: pending.candidateIdentity, officialCommit: pending.officialCommit,
+      payloadSha256: pending.candidatePayloadSha256, installerSha256: pending.candidateInstallerSha256,
+      sourcePayloadUnchanged: true };
+    assert.throws(() => validateManualReadiness(pending, matchingShape, syntheticNow()), /manual-acceptance-required/);
   }
-  // Shape-only fixture from the pending template, not a physical candidate verification.
-  const matchingShape = { schemaVersion: 1, kind: 'official-nsis-candidate', version: pending.version,
-    identity: pending.candidateIdentity, officialCommit: pending.officialCommit,
-    payloadSha256: pending.candidatePayloadSha256, installerSha256: pending.candidateInstallerSha256,
-    sourcePayloadUnchanged: true };
-  assert.throws(() => validateManualReadiness(pending, matchingShape, syntheticNow()), /manual-acceptance-required/);
 });
 
 for (const key of ['installer', 'recovery', 'ui']) {

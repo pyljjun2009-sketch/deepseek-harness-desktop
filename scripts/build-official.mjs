@@ -1,21 +1,32 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { resolve, join, dirname } from 'node:path';
+import { resolve, join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stageOfficialShell, inventoryShellFiles } from './stage-official-shell.mjs';
+import officialUpgrade from '../desktop/official-upgrade.cjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const lock = JSON.parse(await readFile(join(root, 'official.lock.json'), 'utf8'));
 const distributionVersion = lock.distributionVersion;
 if (!/^\d+\.\d+\.\d+$/.test(distributionVersion)) throw new Error('Distribution version must be an explicit stable semver');
-const source = resolve(process.env.DSH_OFFICIAL_SOURCE || `C:/DSHB/harness-${lock.version.replaceAll('.', '').replaceAll('-', '')}`);
+const requestedSource = resolve(process.env.DSH_OFFICIAL_SOURCE || `C:/DSHBuild/harness-${lock.version.replaceAll('.', '').replaceAll('-', '')}`);
+const source = existsSync(requestedSource) ? await realpath(requestedSource) : requestedSource;
+if (lock.upstreamPackage !== undefined) {
+  const artifact = officialUpgrade.validateOfficialArtifact(lock.upstreamPackage);
+  if (artifact.version !== lock.version) throw new Error('Official desktop package and source versions differ');
+  if (process.argv.includes('--refresh-runtime-lock')) {
+    const cacheKey = Buffer.from(artifact.sha512, 'base64').toString('hex');
+    await officialUpgrade.verifyOfficialPackage(join(root, '.official-build', 'official-packages', `${cacheKey}.exe`), artifact);
+  }
+}
 const staging = join(source, `.community-app-${distributionVersion}-${randomUUID().slice(0, 8)}`);
 const paths = join(source, 'apps/desktop/.desktop-build/targets/win-x64');
 const env = { ...process.env, DSH_DESKTOP_TARGET_PLATFORM: 'win32', DSH_DESKTOP_TARGET_ARCH: 'x64',
   DSH_CLIENT_COMMIT_HASH: lock.commit, DSH_CLIENT_TITLE: 'DeepSeek Harness Desktop · 社区恢复版',
   DSH_CLIENT_BUILD_PROFILE: 'community', DSH_COMMUNITY_PACK: '1',
+  PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}`,
   ELECTRON_BUILDER_7Z_FILTER: 'BCJ', CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
 
 async function run(command, args, cwd = source, environment = env) {
@@ -44,7 +55,7 @@ const pnpmArgs = ['exec', '--yes', `--package=pnpm@${lock.pnpm}`, '--', 'pnpm'];
 const pnpm = (args, cwd = source) => run(process.execPath, [npm, ...pnpmArgs, ...args], cwd);
 if (env.DSH_SHEETJS_CACHE) env.DSH_COMMUNITY_PNPMFILE = join(root, 'desktop/verified-cache.cjs');
 const retainedRuntimeLock = join(root, 'official-runtime.lock.yaml');
-if (existsSync(retainedRuntimeLock)) env.DSH_COMMUNITY_RUNTIME_LOCK = retainedRuntimeLock;
+if (existsSync(retainedRuntimeLock) && !process.argv.includes('--refresh-runtime-lock')) env.DSH_COMMUNITY_RUNTIME_LOCK = retainedRuntimeLock;
 
 if (!process.argv.includes('--stage-only')) {
   await pnpm(['install', '--frozen-lockfile', ...(env.DSH_SHEETJS_CACHE ? ['--pnpmfile', join(root, 'desktop/verified-cache.cjs')] : [])]);
@@ -58,7 +69,8 @@ if (!process.argv.includes('--stage-only')) {
   await pnpm(['exec', 'vitest', 'run', 'apps/desktop/tests/fatal-recovery.spec.ts',
     'apps/desktop/tests/backend-controller.spec.ts', 'apps/desktop/tests/directory-picker.spec.ts',
     'apps/desktop/tests/single-instance.spec.ts', 'apps/desktop/tests/project-manager.spec.ts',
-    'apps/desktop/tests/update-coordinator.spec.ts', 'scripts/release/families.spec.ts']);
+    'apps/desktop/tests/update-coordinator.spec.ts', 'apps/desktop/tests/update-channel.spec.ts',
+    'apps/desktop/tests/update-schedule.spec.ts', 'scripts/release/families.spec.ts']);
   await pnpm(['run', 'release:pack', '--family', 'dsh', '--out', join(paths, 'packed/dsh'), '--concurrency', '4']);
   await pnpm(['--dir', 'apps/desktop-host', 'pack', '--pack-destination', join(paths, 'packed/dsh')]);
   await pnpm(['run', 'release:pack', '--family', 'vendor', '--out', join(paths, 'packed/vendor'), '--concurrency', '4']);
@@ -81,7 +93,7 @@ await writeFile(join(staging, 'package.json'), JSON.stringify({
   ...upstream, name: manifest.name, version: distributionVersion, productName: 'DeepSeek Harness Desktop',
   description: 'Community recovery edition based on official DeepSeek Harness Desktop',
   author: manifest.author, main: 'desktop/launcher.cjs', dshOfficialVersion: lock.version,
-  dshOfficialCommit: lock.commit
+  dshOfficialCommit: lock.commit, dshDesktopUpdateChannel: 'latest', dshUpgradeInterfaceVersion: 1
 }, null, 2));
 await cp(join(root, 'official.lock.json'), join(staging, 'official.lock.json'));
 await cp(join(source, 'LICENSE'), join(staging, 'LICENSE.official'));
@@ -89,6 +101,9 @@ const receiptPath = join(staging, 'shell-dependency-receipt.json');
 const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
 receipt.files = (await inventoryShellFiles(staging)).filter(file => file.path !== 'shell-dependency-receipt.json');
 await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+if (process.argv.includes('--refresh-runtime-lock')) {
+  await cp(join(paths, 'dsh/pnpm-lock.yaml'), retainedRuntimeLock);
+}
 const record = { source, staging, paths, officialVersion: lock.version, officialCommit: lock.commit,
   overlaySha256: createHash('sha256').update(await readFile(patch)).digest('hex'), version: distributionVersion,
   shellReceiptSha256: createHash('sha256').update(await readFile(receiptPath)).digest('hex'),

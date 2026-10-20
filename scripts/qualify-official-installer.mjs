@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { installWindowsCommunityInstaller } from './windows-community-installer.mjs';
 import { verifyCommunityHostPort } from './verify-official-host.mjs';
 import { verifyCommunityUpdateConfiguration } from './community-update-config.mjs';
+import { candidateStorageRoot, nativeStorage } from './community-build-storage.mjs';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
@@ -22,16 +23,19 @@ const digestPattern = /^[a-f0-9]{64}$/;
 const extraInstalledFiles = new Set(['Uninstall DeepSeekHarness.exe', '7zip-installer-LICENSE.txt',
   '7zip-installer-COPYING.txt', 'uninstallerIcon.ico']);
 
-export function installerQualificationPlan(identifier, projectRoot = project) {
+export function installerQualificationPlan(identifier, projectRoot = project, storageVersion = 1) {
   assert(uuidPattern.test(identifier), 'A fresh UUID v4 is required for every qualification');
+  assert([1, 2].includes(storageVersion), 'Unsupported QA storage version');
   const prefix = 'dsh-installer-qa-';
   const evidence = resolve(projectRoot, '.official-build', `installer-qualification-${identifier}`);
-  const base = win32.resolve('C:\\DSHQI', identifier);
+  const baseRoot = storageVersion === 2 ? nativeStorage.installer : 'C:\\DSHQI';
+  const copyRoot = storageVersion === 2 ? nativeStorage.installerCopy : 'C:\\DSHQB';
+  const base = win32.resolve(baseRoot, identifier);
   const target = win32.join(base, 'app');
-  const copyBase = win32.resolve('C:\\DSHQB', identifier);
-  assert.equal(win32.dirname(base).toLowerCase(), 'c:\\dshqi');
+  const copyBase = win32.resolve(copyRoot, identifier);
+  assert.equal(win32.dirname(base), baseRoot);
   assert.equal(win32.dirname(target), base);
-  return Object.freeze({ identifier, evidence, base, target,
+  return Object.freeze({ identifier, evidence, baseRoot, copyRoot, base, target,
     payload: resolve(projectRoot, 'release', 'win-unpacked'),
     copyBase, payloadCopy: win32.join(copyBase, 'app'),
     probeProject: join(evidence, 'probe-project'), artifacts: join(evidence, 'probe-artifacts'),
@@ -201,11 +205,10 @@ export function validateQualificationCandidate(candidate, lock, prepared, projec
   assert(digestPattern.test(candidate.payloadSha256), 'Invalid candidate payload digest');
   assert(digestPattern.test(candidate.installerSha256), 'Invalid candidate installer digest');
   assert.equal(typeof candidate.payload, 'string');
-  const match = /^C:\\DSHBP\\([^\\]+)\\app$/.exec(candidate.payload);
-  assert(match && uuidPattern.test(match[1]), 'Candidate payload must be an owned C:\\DSHBP\\UUIDv4\\app');
+  const storageRoot = candidateStorageRoot(candidate.payload, candidate.identity);
+  assert(storageRoot, 'Candidate payload must be in an exact owned UUIDv4 namespace');
   assert.equal(win32.resolve(candidate.payload), candidate.payload, 'Candidate path must be canonical');
-  assert.equal(candidate.identity, match[1], 'Candidate identity does not match its owned path');
-  assert.equal(win32.dirname(win32.dirname(candidate.payload)).toLowerCase(), 'c:\\dshbp');
+  assert.equal(win32.dirname(win32.dirname(candidate.payload)), storageRoot);
   assert.equal(typeof candidate.installer, 'string');
   assert.equal(resolve(candidate.installer), candidate.installer, 'Candidate installer path must be absolute and canonical');
   assert.equal(dirname(candidate.installer), resolve(projectRoot, 'release'), 'Candidate installer must be in the release output');
@@ -229,17 +232,19 @@ export async function verifyQualificationPayloadBindings(payload, lock, prepared
   assert.equal(manifest.main, 'desktop/launcher.cjs', 'Packaged desktop entry point is unexpected');
   assert.equal(manifest.dshOfficialCommit, lock.commit, 'Packaged official commit is stale');
   assert.equal(manifest.dshOfficialVersion, lock.version, 'Packaged official version is stale');
+  assert.equal(manifest.dshDesktopUpdateChannel, 'latest', 'Packaged community update channel is not latest');
+  assert.equal(manifest.dshUpgradeInterfaceVersion, 1, 'Packaged upgrade interface is unsupported');
   if (prepared) {
     const receipt = asar.extractFile(archive, 'shell-dependency-receipt.json');
     assert.equal(createHash('sha256').update(receipt).digest('hex'), prepared.shellReceiptSha256,
       'Packaged shell receipt differs from the prepared candidate');
     assert.equal(typeof prepared.staging, 'string', 'The prepared staging path is missing');
     const staged = JSON.parse(await readFile(join(prepared.staging, 'package.json'), 'utf8'));
-    for (const key of ['version', 'main', 'dshOfficialCommit', 'dshOfficialVersion']) {
+    for (const key of ['version', 'main', 'dshOfficialCommit', 'dshOfficialVersion', 'dshDesktopUpdateChannel', 'dshUpgradeInterfaceVersion']) {
       assert.equal(staged[key], manifest[key], `Stale staged candidate identity: ${key}`);
     }
   }
-  for (const file of ['launcher.cjs', 'recovery.cjs', 'watchdog.cjs', 'health-window.cjs']) {
+  for (const file of ['launcher.cjs', 'recovery.cjs', 'watchdog.cjs', 'health-window.cjs', 'official-upgrade.cjs']) {
     const current = await readFile(join(projectRoot, 'desktop', file));
     assert.deepEqual(asar.extractFile(archive, `desktop/${file}`), current, `Stale packaged desktop wrapper: ${file}`);
     if (file === 'recovery.cjs' || file === 'watchdog.cjs') {
@@ -395,6 +400,8 @@ export function qualificationError(error) {
   if (typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,80}$/.test(error.code)) diagnostic.code = error.code;
   if (Number.isSafeInteger(error?.code)) diagnostic.nativeExitCode = error.code;
   if (Number.isSafeInteger(error?.exitCode)) diagnostic.exitCode = error.exitCode;
+  if (error?.killed === true) diagnostic.killed = true;
+  if (['SIGTERM', 'SIGKILL', 'SIGINT'].includes(error?.signal)) diagnostic.signal = error.signal;
   if (/timed out after 4 minutes/.test(message)) diagnostic.reason = 'nsis-compiler-timeout';
   else if (/smaller than the embedded archive/.test(message)) diagnostic.reason = 'truncated-installer';
   else if (/Generated installer was not created/.test(message)) diagnostic.reason = 'missing-installer';
@@ -437,10 +444,10 @@ export async function qualifyOfficialInstaller() {
   assert.equal(process.platform, 'win32', 'Native installer qualification requires Windows');
   const selected = await selectQualificationPayload();
   assert.equal(selected.kind, 'official-nsis-candidate', 'Release qualification requires the final NSIS candidate record');
-  const plan = Object.freeze({ ...installerQualificationPlan(randomUUID()), payload: selected.payload });
+  const plan = Object.freeze({ ...installerQualificationPlan(randomUUID(), project, 2), payload: selected.payload });
   const lock = JSON.parse(await readFile(join(project, 'official.lock.json'), 'utf8'));
   const version = lock.distributionVersion;
-  const electronVersion = require('electron/package.json').version;
+  const electronVersion = lock.electron;
   const keys = [{ hive: 'CurrentUser', path: plan.installKey }, { hive: 'CurrentUser', path: plan.uninstallKey },
     { hive: 'LocalMachine', path: plan.installKey }, { hive: 'LocalMachine', path: plan.uninstallKey }];
   require('app-builder-lib');
@@ -472,7 +479,7 @@ export async function qualifyOfficialInstaller() {
   let original;
   let uninstallSha;
   try {
-    await mkdir('C:\\DSHQI', { recursive: true });
+    await mkdir(plan.baseRoot, { recursive: true });
     await noLinkedAncestors(plan.base); await mkdir(plan.base); await mkdir(plan.target);
     await writeFile(join(plan.evidence, 'ownership.json'), `${JSON.stringify(plan, null, 2)}\n`);
     report.phase = 'payload-inventory'; original = await payloadInventory(plan.payload);
@@ -481,10 +488,10 @@ export async function qualifyOfficialInstaller() {
     assert(original.files.some(file => file.path === 'resources/app.asar'));
     await writeFile(join(plan.evidence, 'payload-manifest.json'), `${JSON.stringify(original, null, 2)}\n`);
     report.phase = 'owned-payload-copy';
-    assert.equal(win32.dirname(plan.copyBase).toLowerCase(), 'c:\\dshqb');
+    assert.equal(win32.dirname(plan.copyBase), plan.copyRoot);
     assert.equal(win32.dirname(plan.payloadCopy), plan.copyBase);
     assert.equal(win32.basename(plan.payloadCopy), 'app');
-    await mkdir('C:\\DSHQB', { recursive: true });
+    await mkdir(plan.copyRoot, { recursive: true });
     await noLinkedAncestors(plan.copyBase); await mkdir(plan.copyBase);
     await writeFile(join(plan.copyBase, 'ownership.json'), `${JSON.stringify(plan, null, 2)}\n`);
     await copyQualificationPayload(plan.payload, plan.payloadCopy, original);
@@ -520,7 +527,9 @@ export async function qualifyOfficialInstaller() {
       assert.equal(win32.resolve(plan.target), win32.join(plan.base, 'app'));
       report.phase = `install-${round}`;
       await run(installer, ['/S', '/currentuser', `/D=${plan.target}`],
-        { windowsHide: true, env: childEnvironment(), timeout: 180000, maxBuffer: 1024 * 1024 });
+        // A full ~1.1 GB extraction can exceed 3 minutes under concurrent Windows IO.
+        // Keep an absolute bound within the 45-minute qualification lane; never relax byte/registry checks.
+        { windowsHide: true, env: childEnvironment(), timeout: 600000, maxBuffer: 1024 * 1024 });
       await ensureProbeRegistration(plan); registrationOwned = true;
       report.phase = `installed-payload-verification-${round}`;
       const installed = await payloadInventory(plan.target);

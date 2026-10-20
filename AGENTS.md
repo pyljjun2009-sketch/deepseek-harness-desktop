@@ -8,10 +8,14 @@
 - Build official Windows installer: `npm run dist:official` (`dist:win` also selects official)
 - Legacy supervisor only: `npm run dist:legacy`; never publish it as an official-baseline distribution
 - Real isolated release qualifications: `npm run qualify:recovery` and `npm run qualify:installer`
+- Explicit upstream preparation only: `npm run upgrade:official:check`, `upgrade:official:download`, `upgrade:official:plan`
 
 ## Stability rules
 
 - Never mutate `~/.dsh` during an upgrade. Treat it as user-owned data.
+- Pin official desktop package metadata and the matching source commit together. The v1 upstream provider cannot execute an installer or authorize activation/publication. Keep community updates on the sealed `latest` channel.
+- A baseline refresh may replace `official-runtime.lock.yaml` only after the newly prepared complete runtime and shell verify. Never reuse an older candidate's qualification reports for new bytes.
+- Use the closed physical QA namespaces in `scripts/community-build-storage.mjs`. Never weaken link checks or modify user-relocated legacy junctions to make a test pass.
 - A downloaded runtime must pass `--version` and the active web profile's `--dump-config` before activation.
 - A candidate is not stable until it survives the probation window and HTTP health checks.
 - Keep the bundled runtime as the final recovery floor.

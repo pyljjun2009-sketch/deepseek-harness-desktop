@@ -31,7 +31,7 @@ jobs:
         run: npm run dist:official
         timeout-minutes: 90
         env:
-          DSH_OFFICIAL_SOURCE: C:\DSHB\harness-020rc2
+          DSH_OFFICIAL_SOURCE: C:\DSHBuild\harness-021rc2
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
       - name: Real native installer guard and directory transaction tests
@@ -45,13 +45,13 @@ jobs:
         run: npm run test:shell
         env:
           DSH_SHELL_REAL_TEST: "1"
-          DSH_OFFICIAL_SOURCE: C:\DSHB\harness-020rc2
+          DSH_OFFICIAL_SOURCE: C:\DSHBuild\harness-021rc2
       - name: Qualify three real crashes with the production watchdog
         run: npm run qualify:recovery
         timeout-minutes: 30
       - name: Qualify full isolated install, replacement and uninstall
         run: npm run qualify:installer
-        timeout-minutes: 30
+        timeout-minutes: 45
       # A tag is not human acceptance. Keep release publication/latest updates out
       # of this rebuild job: a rebuilt binary has a new identity and needs its own
       # native folder/menu acceptance, even when its source version is unchanged.

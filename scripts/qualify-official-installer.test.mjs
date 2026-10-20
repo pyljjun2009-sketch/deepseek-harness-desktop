@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { finished } from 'node:stream/promises';
 import test from 'node:test';
+import { assertPhysicalAncestors, candidateStorageRoot, expectedRecoveryHome, nativeStorage } from './community-build-storage.mjs';
 import { childEnvironment, installerQualificationPlan, payloadInventory, probeConfiguration,
   probeInclude, qualificationError, verifyInstalledPayload, validateQualificationCandidate,
   selectQualificationPayload, copyQualificationPayload, validateProbeUpdateMetadata,
@@ -13,6 +14,27 @@ import { childEnvironment, installerQualificationPlan, payloadInventory, probeCo
 
 const identifier = 'a1234567-1234-4567-8123-123456789abc';
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+test('physical QA namespace preserves exact identity and never accepts a relocated arbitrary root', () => {
+  const payload = nativeStorage.candidate + '\\' + identifier + '\\app';
+  assert.equal(candidateStorageRoot(payload, identifier), nativeStorage.candidate);
+  assert.equal(candidateStorageRoot(payload, 'not-an-id'), undefined);
+  for (const bad of [payload.toLowerCase(), payload.replace('C:', 'D:'), payload + '\\..\\app',
+    '\\\\server\\share\\' + identifier + '\\app', payload.replaceAll('\\', '/')]) {
+    assert.equal(candidateStorageRoot(bad, identifier), undefined);
+  }
+  const plan = installerQualificationPlan(identifier, project, 2);
+  assert.equal(plan.baseRoot, nativeStorage.installer);
+  assert.equal(plan.copyRoot, nativeStorage.installerCopy);
+  assert.equal(plan.target, nativeStorage.installer + '\\' + identifier + '\\app');
+  assert.equal(plan.payloadCopy, nativeStorage.installerCopy + '\\' + identifier + '\\app');
+  assert.throws(() => installerQualificationPlan(identifier, project, 3));
+  const home = nativeStorage.recovery + '\\' + identifier + '\\home';
+  assert(expectedRecoveryHome(home, identifier));
+  assert(expectedRecoveryHome('C:\\DSHRQ\\' + identifier + '\\home', identifier));
+  assert(!expectedRecoveryHome(home + '\\..\\home', identifier));
+  assert(!expectedRecoveryHome(home, 'not-an-id'));
+});
 
 const lock = { distributionVersion: '0.5.0', commit: 'a'.repeat(40), version: '0.2.0-rc.2' };
 const prepared = { version: '0.5.0', officialCommit: lock.commit, overlaySha256: 'b'.repeat(64),
@@ -32,7 +54,7 @@ async function fixture(callback) {
   }
 }
 
-async function packagedFixture(root, hostPort = '0') {
+async function packagedFixture(root, hostPort = '0', manifestOverrides = {}) {
   const source = join(root, 'archive-source');
   const payload = join(root, 'release', 'win-unpacked');
   await mkdir(join(source, 'desktop'), { recursive: true });
@@ -42,9 +64,10 @@ async function packagedFixture(root, hostPort = '0') {
   await mkdir(join(root, 'desktop'), { recursive: true });
   await mkdir(join(payload, 'resources', 'recovery'), { recursive: true });
   await writeFile(join(source, 'package.json'), JSON.stringify({ version: lock.distributionVersion,
-    main: 'desktop/launcher.cjs', dshOfficialCommit: lock.commit, dshOfficialVersion: lock.version }));
+    main: 'desktop/launcher.cjs', dshOfficialCommit: lock.commit, dshOfficialVersion: lock.version,
+    dshDesktopUpdateChannel: 'latest', dshUpgradeInterfaceVersion: 1, ...manifestOverrides }));
   await writeFile(join(source, 'shell-dependency-receipt.json'), '{"fixture":true}');
-  for (const file of ['launcher.cjs', 'recovery.cjs', 'watchdog.cjs', 'health-window.cjs']) {
+  for (const file of ['launcher.cjs', 'recovery.cjs', 'watchdog.cjs', 'health-window.cjs', 'official-upgrade.cjs']) {
     const contents = `// tiny ${file}`;
     await writeFile(join(source, 'desktop', file), contents);
     await writeFile(join(root, 'desktop', file), contents);
@@ -106,6 +129,9 @@ test('qualification rejects stale ASAR identity, current source wrappers, and ex
     await writeFile(join(root, 'desktop', 'launcher.cjs'), 'changed-source-wrapper');
     await assert.rejects(verifyQualificationPayloadBindings(payload, lock, null, root), /packaged desktop wrapper/);
     await writeFile(join(root, 'desktop', 'launcher.cjs'), '// tiny launcher.cjs');
+    await writeFile(join(root, 'desktop', 'official-upgrade.cjs'), 'stale-upgrade-provider');
+    await assert.rejects(verifyQualificationPayloadBindings(payload, lock, null, root), /packaged desktop wrapper/);
+    await writeFile(join(root, 'desktop', 'official-upgrade.cjs'), '// tiny official-upgrade.cjs');
     await writeFile(join(payload, 'resources', 'recovery', 'watchdog.cjs'), 'changed-recovery');
     await assert.rejects(verifyQualificationPayloadBindings(payload, lock, null, root), /external recovery wrapper/);
     await writeFile(join(root, 'desktop', 'official-overlay.patch'), 'current-overlay');
@@ -120,6 +146,15 @@ test('qualification rejects the upstream fixed port inside a physically sealed A
     await assert.rejects(verifyQualificationPayloadBindings(payload, lock, null, root), /OS allocate its loopback port/);
   });
 });
+
+for (const manifest of [{ dshDesktopUpdateChannel: 'nightly' }, { dshUpgradeInterfaceVersion: 2 }]) {
+  test('qualification refuses unqualified sealed upgrade metadata ' + JSON.stringify(manifest), async () => {
+    await fixture(async root => {
+      const payload = await packagedFixture(root, '0', manifest);
+      await assert.rejects(verifyQualificationPayloadBindings(payload, lock, null, root), /update channel|upgrade interface/);
+    });
+  });
+}
 
 test('prepared qualification bindings include physical root inputs, embedded receipt, and staged manifest', async () => {
   await fixture(async root => {
@@ -239,6 +274,10 @@ test('failure diagnostics never preserve a complete command, URL, or credential'
   assert.deepEqual(qualificationError(new Error('warning 6010: a variable; warning 6010: duplicate; Error in script private/file.nsi on line 40')),
     { kind: 'operation', warningCodes: [6010], scriptErrorLine: 40 });
   assert.deepEqual(qualificationError({ code: 2 }), { kind: 'operation', nativeExitCode: 2 });
+  assert.deepEqual(qualificationError({ killed: true, signal: 'SIGTERM', message: 'private command' }),
+    { kind: 'operation', killed: true, signal: 'SIGTERM' });
+  assert.deepEqual(qualificationError({ killed: false, signal: 'SECRET', message: 'private command' }),
+    { kind: 'operation' });
 });
 
 test('QA include verifies exact paths and identities without production process termination', () => {
@@ -290,8 +329,10 @@ test('payload inventory hashes physical files and refuses junctions', async () =
     await writeFile(join(payload, 'file.txt'), 'data2');
     assert.notEqual((await payloadInventory(payload)).sha256, first.sha256);
     const external = join(directory, 'external'); await mkdir(external);
+    await assertPhysicalAncestors(join(payload, 'missing', 'fresh'));
     await symlink(external, link, process.platform === 'win32' ? 'junction' : 'dir');
     await assert.rejects(payloadInventory(payload), /links or junctions/);
+    await assert.rejects(assertPhysicalAncestors(join(link, 'missing', 'fresh')), /link or junction/);
     await unlink(link);
   } finally {
     // Remove only this freshly created, verified direct-child fixture; never the QA install target.

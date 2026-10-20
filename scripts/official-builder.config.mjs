@@ -9,6 +9,7 @@ import { installWindowsCommunityInstaller, windowsApplicationPathBudget } from '
 import { verifyOfficialShellAsar } from './verify-official-shell-asar.mjs';
 import { communityPackageName, writeCommunityUpdateConfiguration } from './community-update-config.mjs';
 import { verifyCommunityHostPort } from './verify-official-host.mjs';
+import { officialDependencyHooks } from './official-dependency-hooks.mjs';
 installWindowsCommunityInstaller();
 const root = fileURLToPath(new URL('../', import.meta.url));
 const prepared = JSON.parse(readFileSync(join(root, '.official-build/paths.json'), 'utf8'));
@@ -48,8 +49,7 @@ export default {
   electronVersion: officialLock.electron,
   appId: 'com.deepseek.harness.desktop', productName: 'DeepSeek Harness Desktop',
   directories: { app: staging, output: join(root, 'release') },
-  asar: true, npmRebuild: true, nodeGypRebuild: false, electronDist: join(paths, 'electron'),
-  beforeBuild: async () => false, // The production dependency closure was already frozen and materialized.
+  asar: true, ...officialDependencyHooks, electronDist: join(paths, 'electron'),
   electronFuses: { runAsNode: true },
   files: ['lib/**/*', 'renderer/**/*', 'desktop/*.cjs', 'package.json', 'official.lock.json', 'LICENSE.official', 'shell-dependency-receipt.json',
     '!desktop/*.test.cjs', { from: dsh, to: 'dsh', filter: ['**/*'] },

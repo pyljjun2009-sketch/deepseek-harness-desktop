@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { cleanupShellManifest, inventoryShellFiles, publishShellStage, SHELL_METADATA_BUILDER_VERSION, stageOfficialShell } from './stage-official-shell.mjs';
+import { officialDependencyHooks } from './official-dependency-hooks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = join(root, '.official-build');
@@ -217,7 +217,7 @@ test('actual locked official shell closure stages outside the source tree withou
     const directory = await privateDirectory();
     try {
       const staging = join(directory, 'staging');
-      const checkout = process.env.DSH_OFFICIAL_SOURCE || 'C:/DSHB/harness-020rc2';
+      const checkout = process.env.DSH_OFFICIAL_SOURCE || 'C:/DSHBuild/harness-021rc2';
       const receipt = await stageOfficialShell(checkout, staging);
       for (const name of ['electron-updater', 'semver', 'ws', '@deepseek-ai/dsh-api-gateway', '@deepseek-ai/cordis']) {
         assert(receipt.packages.some(pkg => pkg.path === `node_modules/${name}`));
@@ -241,9 +241,11 @@ test('actual locked official shell closure stages outside the source tree withou
     } finally { await cleanup(directory); }
   });
 
-test('official config invokes the external dependency hook instead of returning before it',
-  { skip: !existsSync(join(root, '.official-build/paths.json')) }, async () => {
-    const { default: config } = await import('./official-builder.config.mjs');
+test('official config invokes the external dependency hook instead of returning before it', async () => {
+    // This builder behavior test needs no prepared runtime or stale paths.json.
+    // Real ASAR verification remains a separate mandatory full-build gate.
+    assert.match(await readFile(join(root, 'scripts/official-builder.config.mjs'), 'utf8'), /\.\.\.officialDependencyHooks/);
+    const config = officialDependencyHooks;
     assert.equal(config.npmRebuild, true, 'npmRebuild:false returns before beforeBuild runs');
     assert.notEqual(config.nodeGypRebuild, true, 'node-gyp must not run before the external closure hook');
     assert.equal(await config.beforeBuild({}), false);
@@ -254,7 +256,7 @@ test('official config invokes the external dependency hook instead of returning 
     const instance = {
       options: {}, framework: { isNpmRebuildRequired: true, version: '44.0.0' },
       config: { ...config, beforeBuild: async context => { hookCalls++; return config.beforeBuild(context); } },
-      appInfo: { type: 'module' }, appDir: config.directories.app, _nodeModulesHandledExternally: false,
+      appInfo: { type: 'module' }, appDir: root, _nodeModulesHandledExternally: false,
       getWorkspaceRoot: async () => root,
     };
     await Packager.prototype.installAppDependencies.call(instance, { nodeName: 'win32' }, 1);

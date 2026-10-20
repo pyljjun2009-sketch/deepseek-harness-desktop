@@ -6,6 +6,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { selectQualificationPayload } from './qualify-official-installer.mjs';
+import { expectedRecoveryHome } from './community-build-storage.mjs';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
@@ -124,7 +125,7 @@ export function validateStableReadiness(record, candidate, automatic, now) {
   const references = validateManualReadiness(record, candidate, now);
   const result = validateAutomaticReadiness(candidate, automatic);
   requireTrue(automatic.installer.guid === references.installerIdentity &&
-    automatic.recovery.isolatedHome === `C:\\DSHRQ\\${references.recoveryIdentity}\\home`, 'report-identity-mismatch');
+    expectedRecoveryHome(automatic.recovery.isolatedHome, references.recoveryIdentity), 'report-identity-mismatch');
   return { schemaVersion: 1, version: candidate.version, candidateIdentity: candidate.identity,
     candidatePayloadSha256: candidate.payloadSha256, candidateInstallerSha256: candidate.installerSha256,
     ...result, manualAttestationPassed: true, readinessPassed: true, publicationAuthorized: false,
@@ -176,7 +177,7 @@ export async function main(mode, root = project) {
   const automatic = await reportsAt(root, references);
   const result = validateAutomaticReadiness(candidate, automatic);
   requireTrue(automatic.installer.guid === references.installerIdentity &&
-    automatic.recovery.isolatedHome === `C:\\DSHRQ\\${references.recoveryIdentity}\\home` &&
+    expectedRecoveryHome(automatic.recovery.isolatedHome, references.recoveryIdentity) &&
     result.payloadFileCount === selected.inventory.files.length, 'report-identity-or-inventory-mismatch');
   if (mode === '--check') return validateStableReadiness(record, candidate, automatic);
   return { schemaVersion: 1, version: candidate.version, ...result, manualAcceptance: 'pending',

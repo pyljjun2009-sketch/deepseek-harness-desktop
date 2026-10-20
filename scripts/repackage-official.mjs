@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { payloadInventory } from './qualify-official-installer.mjs';
 import config, { verifyPackagedOfficial } from './official-builder.config.mjs';
 import { communityPackageName, writeCommunityUpdateConfiguration, verifyCommunityUpdateConfiguration } from './community-update-config.mjs';
+import { assertPhysicalAncestors, nativeStorage } from './community-build-storage.mjs';
 
 assert.equal(process.platform, 'win32', 'Only the qualified Windows x64 pipeline is supported');
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,11 +29,13 @@ assert.equal(manifest.version, lock.distributionVersion);
 assert.equal(manifest.dshOfficialCommit, lock.commit);
 assert.equal(manifest.dshOfficialVersion, lock.version);
 assert.equal(manifest.main, 'desktop/launcher.cjs');
+assert.equal(manifest.dshDesktopUpdateChannel, 'latest');
+assert.equal(manifest.dshUpgradeInterfaceVersion, 1);
 const stagingManifest = JSON.parse(await readFile(join(prepared.staging, 'package.json'), 'utf8'));
-for (const key of ['version', 'main', 'dshOfficialCommit', 'dshOfficialVersion']) {
+for (const key of ['version', 'main', 'dshOfficialCommit', 'dshOfficialVersion', 'dshDesktopUpdateChannel', 'dshUpgradeInterfaceVersion']) {
   assert.equal(stagingManifest[key], manifest[key], `Stale installer metadata: ${key}`);
 }
-for (const file of ['launcher.cjs', 'recovery.cjs', 'watchdog.cjs', 'health-window.cjs']) {
+for (const file of ['launcher.cjs', 'recovery.cjs', 'watchdog.cjs', 'health-window.cjs', 'official-upgrade.cjs']) {
   assert.deepEqual(asar.extractFile(archive, `desktop/${file}`), await readFile(join(project, 'desktop', file)), `Stale packaged wrapper: ${file}`);
 }
 for (const file of ['recovery.cjs', 'watchdog.cjs']) {
@@ -43,8 +46,10 @@ const before = await payloadInventory(payload);
 // electron-builder mutates even prepackaged inputs (elevate.exe / app-update.yml).
 // Protect the tested tree; qualify and install exactly the final independently owned copy.
 const identity = randomUUID();
-const parent = resolve('C:/DSHBP');
+const parent = resolve(nativeStorage.candidate);
+await assertPhysicalAncestors(parent);
 await mkdir(parent, { recursive: true });
+await assertPhysicalAncestors(parent);
 assert((await lstat(parent)).isDirectory() && !(await lstat(parent)).isSymbolicLink());
 const candidateRoot = join(parent, identity);
 await mkdir(candidateRoot);

@@ -1,12 +1,23 @@
 {
   "schemaVersion": 1,
-  "distributionVersion": "0.5.0",
+  "distributionVersion": "0.6.0",
   "repository": "https://github.com/deepseek-ai/deepseek-harness",
-  "commit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-  "tag": "dsh-v0.2.0-rc.2",
-  "version": "0.2.0-rc.2",
-  "sourceArchive": "https://codeload.github.com/deepseek-ai/deepseek-harness/tar.gz/639ed015397290b3745d163aafe02ffee4aa3f84",
-  "sourceSha256": "bbc09e888e1df3aa37be049abdb7720951e76442d21e5432365d87a465d628f1",
-  "pnpm": "11.7.0",
-  "electron": "44.0.0"
+  "commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "tag": "dsh-v0.2.1-rc.2",
+  "version": "0.2.1-rc.2",
+  "sourceArchive": "https://codeload.github.com/deepseek-ai/deepseek-harness/tar.gz/687f282e8625c6b8d11ff58211a90524be2e4317",
+  "sourceSha256": "157903b22c2881d3678d846755afe957a48df834e747deda805a1195ce25a146",
+  "pnpm": "11.28.5",
+  "electron": "44.7.0",
+  "upstreamPackage": {
+    "interfaceVersion": 1,
+    "provider": "deepseek-official-desktop",
+    "platform": "win32",
+    "arch": "x64",
+    "version": "0.2.1-rc.2",
+    "url": "https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.1-rc.2-win-x64.exe",
+    "sha512": "39POl5osl9PKMqrPXQA52dh/bCV0Z02vOV9cTjOJDHE6gsJwp5bv7lfgB3mVWAKspX7a/w1iTi+8Listdhq45g==",
+    "size": 289385456,
+    "releaseDate": "2026-10-17T09:22:23.750Z"
+  }
 }
